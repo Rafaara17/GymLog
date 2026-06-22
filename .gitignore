@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Packages/
+
+# CocoaPods / Carthage (não usados, por garantia)
+Pods/
+Carthage/Build/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# CSVs exportados localmente
+gymlog_*.csv

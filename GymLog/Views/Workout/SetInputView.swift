@@ -15,10 +15,14 @@ struct SetInputView: View {
     @State private var currentWeight: Double = 20.0
     @State private var currentReps: Int = 0
     @State private var currentRPE: Int = 0   // 0 = não informado
+    @State private var lastWorkout: WorkoutViewModel.LastWorkout?
     @FocusState private var repsFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
+            if let lastWorkout {
+                LastWorkoutCard(lastWorkout: lastWorkout)
+            }
             historyList
             Divider()
             inputArea
@@ -26,7 +30,13 @@ struct SetInputView: View {
         .navigationTitle(exercise.name)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            currentWeight = exercise.orderedSets.last?.weightKg ?? 20.0
+            lastWorkout = WorkoutViewModel.lastWorkout(for: exercise.name, context: context)
+
+            // Sugere a carga: continua de onde parou nesta sessão; senão usa
+            // o peso mais usado da última vez; senão um padrão.
+            currentWeight = exercise.orderedSets.last?.weightKg
+                ?? lastWorkout?.suggestedWeight
+                ?? 20.0
             repsFieldFocused = true
         }
     }
@@ -156,5 +166,48 @@ struct SetInputView: View {
         )
         currentReps = 0
         repsFieldFocused = true
+    }
+}
+
+// MARK: - Card "Último treino"
+
+/// Mostra, por peso, quantas séries e com quantas reps foram feitas na última
+/// vez que este exercício foi treinado — referência para escolher a carga.
+private struct LastWorkoutCard: View {
+    let lastWorkout: WorkoutViewModel.LastWorkout
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Último treino", systemImage: "clock.arrow.circlepath")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(Formatters.shortDate.string(from: lastWorkout.date))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(lastWorkout.groups) { group in
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(Formatters.weight(group.weightKg))
+                            .fontWeight(.medium)
+                            .frame(minWidth: 64, alignment: .leading)
+                        Text(group.setCount == 1 ? "1 série" : "\(group.setCount) séries")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(group.reps.map(String.init).joined(separator: ", ") + " reps")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .font(.subheadline)
+                }
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal)
+        .padding(.top, 8)
     }
 }

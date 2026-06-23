@@ -70,6 +70,22 @@ function registerInCatalog(name) {
   db.catalog.push({ id: uid(), name: trimmed, category: null });
 }
 
+// Cria (ou atualiza) uma entrada do catálogo com a categoria/divisão escolhida.
+// Se já existir sem categoria, apenas preenche a categoria. Retorna a entrada.
+export function createCatalogExercise(name, category = null) {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const existing = db.catalog.find((c) => c.name === trimmed);
+  if (existing) {
+    if (category && !existing.category) { existing.category = category; save(); }
+    return existing;
+  }
+  const entry = { id: uid(), name: trimmed, category: category || null };
+  db.catalog.push(entry);
+  save();
+  return entry;
+}
+
 // ── Métricas derivadas dos modelos ────────────────────────────────────────
 export function setVolume(set) { return set.weightKg * set.reps; }
 export function set1RM(set) { return epley(set.weightKg, set.reps); }
@@ -144,12 +160,14 @@ export function addExercise(name, session) {
   return exercise;
 }
 
-export function confirmSet(weightKg, reps, rpe, exercise) {
+// side: null (bilateral), "E" (esquerda) ou "D" (direita) para exercícios unilaterais.
+export function confirmSet(weightKg, reps, rpe, exercise, side = null) {
   exercise.sets.push({
     id: uid(),
     setNumber: exercise.sets.length + 1,
     weightKg, reps,
     rpe: rpe == null ? null : rpe,
+    side: side || null,
     doneAt: Date.now(),
   });
   save();
@@ -290,7 +308,7 @@ export function weeklyVolume(sessions) {
 
 // ── Exportação CSV ────────────────────────────────────────────────────────
 const CSV_HEADER =
-  "date,training_type,exercise,set,weight_kg,reps,estimated_1rm,rpe,done_at,rest_seconds";
+  "date,training_type,exercise,set,weight_kg,reps,estimated_1rm,rpe,done_at,rest_seconds,side";
 
 function escapeCSV(value) {
   return `"${value.replace(/"/g, '""')}"`;
@@ -309,7 +327,7 @@ export function generateCSV(sessions) {
           date, type, escapeCSV(exercise.name), String(set.setNumber),
           set.weightKg.toFixed(2), String(set.reps),
           set1RM(set).toFixed(1), set.rpe == null ? "" : String(set.rpe),
-          isoString(set.doneAt), rest,
+          isoString(set.doneAt), rest, set.side || "",
         ].join(","));
       });
     }
@@ -359,6 +377,7 @@ export function importCSV(text) {
     const reps = parseInt(cols[5], 10) || 0;
     const rpe = cols.length > 7 && cols[7] !== "" ? parseInt(cols[7], 10) : null;
     const doneAt = cols.length > 8 && cols[8] ? Date.parse(cols[8]) : Date.parse(dateStr) || Date.now();
+    const side = cols.length > 10 && cols[10] ? cols[10] : null;
 
     const sessionKey = `${dateStr}|${typeStr}`;
     let session = sessionsByKey.get(sessionKey);
@@ -381,7 +400,7 @@ export function importCSV(text) {
       registerInCatalog(exerciseName);
     }
 
-    exercise.sets.push({ id: uid(), setNumber, weightKg: weight, reps, rpe, doneAt });
+    exercise.sets.push({ id: uid(), setNumber, weightKg: weight, reps, rpe, side, doneAt });
   }
 
   // endedAt = última série da sessão (para histórico/duração coerentes).

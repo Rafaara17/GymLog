@@ -176,9 +176,28 @@ input { font-family: inherit; }
 .step-btn { background: var(--fill); border: none; color: var(--accent); font-size: 15px; font-weight: 600; padding: 9px 12px; border-radius: 9px; }
 .step-btn:active { background: var(--accent-soft); }
 .weight-value { font-size: 24px; font-weight: 600; min-width: 72px; text-align: center; }
+.weight-input { width: 88px; font-size: 24px; font-weight: 600; text-align: center; padding: 8px 4px; border: none; border-radius: 9px; background: var(--fill); color: var(--text); }
 .reps-input { width: 90px; font-size: 24px; font-weight: 600; text-align: center; padding: 8px; border: none; border-radius: 9px; background: var(--fill); color: var(--text); }
 input[type="number"] { -moz-appearance: textfield; }
 input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* ── Modo unilateral (esquerda/direita) ── */
+.uni-toggle { align-self: center; background: var(--fill); border: none; color: var(--accent); font-size: 14px; font-weight: 600; padding: 8px 16px; border-radius: 20px; }
+.uni-toggle.active { background: var(--accent); color: #fff; }
+.uni-toggle:active { filter: brightness(0.95); }
+.uni-grid { display: flex; flex-direction: column; gap: 12px; }
+.uni-side { background: var(--fill); border-radius: 12px; padding: 12px 14px; }
+.uni-side-head { font-size: 14px; font-weight: 600; color: var(--muted); margin-bottom: 10px; text-align: center; }
+.uni-side-row { display: flex; gap: 24px; justify-content: center; align-items: flex-end; }
+.uni-side .weight-input, .uni-side .reps-input { background: var(--bg-elevated); }
+.side-badge { font-size: 11px; font-weight: 700; color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 6px; }
+
+/* ── Criar exercício: escolher divisão ── */
+.create-cat { padding: 8px 16px 20px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.create-cat .section-header { align-self: stretch; }
+.create-cat-label { margin-bottom: 12px; }
+.create-cat .btn-primary { margin-top: 20px; }
+.create-cat-back { margin-top: 8px; }
 
 /* ── Overlays / folhas ── */
 .overlay { position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, 0.4); display: flex; }

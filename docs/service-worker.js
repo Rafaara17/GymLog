@@ -2,7 +2,7 @@
 // service-worker.js — cache do app shell para uso offline.
 // Caminhos relativos: funciona tanto na raiz quanto sob subpasta (GitHub Pages).
 //
-const CACHE = "gymlog-v2";
+const CACHE = "gymlog-v3";
 const ASSETS = [
   "./", "index.html", "styles.css", "manifest.webmanifest",
   "js/app.js", "js/store.js", "js/format.js", "js/charts.js",

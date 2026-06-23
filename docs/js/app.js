@@ -45,6 +45,35 @@ function icon(name, cls = "icon") {
   return E("span", { class: cls, html: ICONS[name] || "" });
 }
 
+// Peso como texto enxuto para campos de digitação ("36", "2.5").
+const weightStr = (v) => (Math.round(v) === v ? String(v) : String(Math.round(v * 10) / 10));
+// Rótulo curto do lado (unilateral).
+const sideLabel = (s) => (s === "E" ? "Esq." : s === "D" ? "Dir." : "");
+
+// Campo de peso editável: dá pra digitar (ex.: 36) e ainda usar −2.5 / +2.5.
+// Retorna { el, get } — `get()` devolve o valor atual em kg.
+function makeWeightField(initial, onChange) {
+  let value = Math.max(0, initial || 0);
+  const input = E("input", {
+    class: "weight-input", type: "number", inputmode: "decimal", step: "0.5", min: "0",
+  });
+  input.value = weightStr(value);
+  const sync = () => { input.value = weightStr(value); };
+  const commit = (v) => { value = Math.max(0, Math.round(v * 100) / 100); onChange(value); };
+  input.addEventListener("input", () => {
+    const v = parseFloat(input.value);
+    value = isNaN(v) || v < 0 ? 0 : v;
+    onChange(value);
+  });
+  input.addEventListener("blur", sync);
+  const el = E("div", { class: "stepper" }, [
+    E("button", { class: "step-btn", onclick: () => { commit(value - 2.5); sync(); } }, "-2.5"),
+    input,
+    E("button", { class: "step-btn", onclick: () => { commit(value + 2.5); sync(); } }, "+2.5"),
+  ]);
+  return { el, get: () => value };
+}
+
 // ── Estado + navegação ──────────────────────────────────────────────────────
 const state = {
   tab: "treino",          // treino | historico | stats
@@ -154,7 +183,7 @@ function activeWorkout(session) {
         ? E("div", { class: "card list" }, rows)
         : E("div", { class: "empty-inline" }, "Adicione o primeiro exercício para começar."),
       E("div", { class: "card list" }, [
-        E("button", { class: "row tappable accent", onclick: () => openPicker((name) => { db.addExercise(name, session); render(); }) },
+        E("button", { class: "row tappable accent", onclick: () => openPicker((name) => { db.addExercise(name, session); render(); }, session.typeRaw) },
           [icon("plus", "icon"), E("span", { class: "row-title accent" }, "Adicionar exercício")]),
       ]),
       exercises.length ? E("p", { class: "hint" }, "Toque para registrar séries · segure para apagar") : null,
@@ -185,11 +214,15 @@ function setInputScreen(exerciseId) {
   // Estado transitório: sugere carga (continua de onde parou; senão último treino; senão 20).
   if (!state.setInput || state.setInput.exerciseId !== exerciseId) {
     const sets = db.orderedSets(exercise);
+    const startW = sets.length ? sets[sets.length - 1].weightKg : (last?.suggestedWeight ?? 20);
     state.setInput = {
       exerciseId,
-      weight: sets.length ? sets[sets.length - 1].weightKg : (last?.suggestedWeight ?? 20),
+      unilateral: false,
+      weight: startW,
       reps: 0,
       rpe: 0,
+      leftWeight: startW, leftReps: 0,
+      rightWeight: startW, rightReps: 0,
     };
   }
   const si = state.setInput;
@@ -209,12 +242,13 @@ function setInputScreen(exerciseId) {
     )),
   ]) : null;
 
-  // Histórico das séries já feitas nesta sessão.
+  // Histórico das séries já feitas nesta sessão (com rótulo de lado se unilateral).
   const sets = db.orderedSets(exercise);
   const history = E("div", { class: "set-history" },
     sets.length ? sets.map((s) => {
       const row = E("div", { class: "set-row" }, [
         E("span", { class: "muted" }, `Série ${s.setNumber}`),
+        s.side ? E("span", { class: "side-badge" }, sideLabel(s.side)) : null,
         E("span", { class: "spacer" }),
         E("span", { class: "set-weight" }, fmt.weight(s.weightKg)),
         E("span", { class: "muted" }, `× ${s.reps}`),
@@ -227,21 +261,9 @@ function setInputScreen(exerciseId) {
     }) : E("p", { class: "empty-inline center" }, "Nenhuma série ainda. Confirme a primeira abaixo.")
   );
 
-  // Display de peso (atualizado sem re-render para preservar o teclado).
-  const weightDisplay = E("span", { class: "weight-value" }, si.weight.toFixed(1));
-  const setWeight = (w) => { si.weight = Math.max(0, w); weightDisplay.textContent = si.weight.toFixed(1); };
-
-  const repsInput = E("input", {
-    class: "reps-input", type: "number", inputmode: "numeric", min: "0",
-    value: si.reps ? String(si.reps) : "", placeholder: "0",
-  });
-
   const confirmBtn = E("button", { class: "btn-primary green" }, [icon("check", "icon sm"), E("span", {}, "Confirmar série")]);
-  const syncConfirm = () => { confirmBtn.disabled = !(parseInt(repsInput.value, 10) > 0); };
-  repsInput.addEventListener("input", () => { si.reps = parseInt(repsInput.value, 10) || 0; syncConfirm(); });
-  syncConfirm();
 
-  // Seletor de RPE (—, 6..10).
+  // Seletor de RPE (—, 6..10) — compartilhado entre os dois lados no unilateral.
   const rpeOptions = [["—", 0], ["6", 6], ["7", 7], ["8", 8], ["9", 9], ["10", 10]];
   const rpeSeg = E("div", { class: "segmented small" }, rpeOptions.map(([label, val]) =>
     E("button", {
@@ -254,36 +276,90 @@ function setInputScreen(exerciseId) {
     }, label)
   ));
 
-  confirmBtn.addEventListener("click", () => {
-    const reps = parseInt(repsInput.value, 10) || 0;
-    if (reps <= 0) return;
-    db.confirmSet(si.weight, reps, si.rpe === 0 ? null : si.rpe, exercise);
-    si.reps = 0;
-    render(); // a lista de séries muda; re-renderiza e refoca reps
-  });
+  // Botão liga/desliga modo unilateral (esquerda/direita separados).
+  const uniToggle = E("button", {
+    class: "uni-toggle" + (si.unilateral ? " active" : ""),
+    onclick: () => {
+      si.unilateral = !si.unilateral;
+      if (si.unilateral) { si.leftWeight = si.weight; si.rightWeight = si.weight; }
+      render();
+    },
+  }, si.unilateral ? "● Unilateral ativado" : "Unilateral");
+
+  // Monta o corpo de entrada conforme o modo, expondo syncConfirm/doConfirm/focusEl.
+  let inputBody, syncConfirm, doConfirm, focusEl;
+
+  if (!si.unilateral) {
+    const wField = makeWeightField(si.weight, (v) => { si.weight = v; });
+    const repsInput = E("input", {
+      class: "reps-input", type: "number", inputmode: "numeric", min: "0",
+      value: si.reps ? String(si.reps) : "", placeholder: "0",
+    });
+    repsInput.addEventListener("input", () => { si.reps = parseInt(repsInput.value, 10) || 0; syncConfirm(); });
+    inputBody = E("div", { class: "input-grid" }, [
+      E("div", { class: "input-col" }, [E("div", { class: "field-label" }, "Peso (kg)"), wField.el]),
+      E("div", { class: "input-col" }, [E("div", { class: "field-label" }, "Reps"), repsInput]),
+    ]);
+    syncConfirm = () => { confirmBtn.disabled = !(parseInt(repsInput.value, 10) > 0); };
+    doConfirm = () => {
+      const reps = parseInt(repsInput.value, 10) || 0;
+      if (reps <= 0) return;
+      db.confirmSet(wField.get(), reps, si.rpe === 0 ? null : si.rpe, exercise, null);
+      si.reps = 0; si.weight = wField.get();
+      render();
+    };
+    focusEl = repsInput;
+  } else {
+    const buildSide = (label, wKey, rKey) => {
+      const wField = makeWeightField(si[wKey], (v) => { si[wKey] = v; });
+      const repsInput = E("input", {
+        class: "reps-input", type: "number", inputmode: "numeric", min: "0",
+        value: si[rKey] ? String(si[rKey]) : "", placeholder: "0",
+      });
+      repsInput.addEventListener("input", () => { si[rKey] = parseInt(repsInput.value, 10) || 0; syncConfirm(); });
+      const block = E("div", { class: "uni-side" }, [
+        E("div", { class: "uni-side-head" }, label),
+        E("div", { class: "uni-side-row" }, [
+          E("div", { class: "input-col" }, [E("div", { class: "field-label" }, "Peso (kg)"), wField.el]),
+          E("div", { class: "input-col" }, [E("div", { class: "field-label" }, "Reps"), repsInput]),
+        ]),
+      ]);
+      return { block, wField, repsInput };
+    };
+    const left = buildSide("Esquerda", "leftWeight", "leftReps");
+    const right = buildSide("Direita", "rightWeight", "rightReps");
+    inputBody = E("div", { class: "uni-grid" }, [left.block, right.block]);
+    syncConfirm = () => {
+      const ok = parseInt(left.repsInput.value, 10) > 0 && parseInt(right.repsInput.value, 10) > 0;
+      confirmBtn.disabled = !ok;
+    };
+    doConfirm = () => {
+      const lr = parseInt(left.repsInput.value, 10) || 0;
+      const rr = parseInt(right.repsInput.value, 10) || 0;
+      if (lr <= 0 || rr <= 0) return;
+      const rpe = si.rpe === 0 ? null : si.rpe;
+      db.confirmSet(left.wField.get(), lr, rpe, exercise, "E");
+      db.confirmSet(right.wField.get(), rr, rpe, exercise, "D");
+      si.leftReps = 0; si.rightReps = 0;
+      si.leftWeight = left.wField.get(); si.rightWeight = right.wField.get();
+      render();
+    };
+    focusEl = left.repsInput;
+  }
+
+  confirmBtn.addEventListener("click", doConfirm);
+  syncConfirm();
 
   const inputArea = E("div", { class: "input-area" }, [
     E("div", { class: "next-set" }, `Série ${exercise.sets.length + 1}`),
-    E("div", { class: "input-grid" }, [
-      E("div", { class: "input-col" }, [
-        E("div", { class: "field-label" }, "Peso (kg)"),
-        E("div", { class: "stepper" }, [
-          E("button", { class: "step-btn", onclick: () => setWeight(si.weight - 2.5) }, "-2.5"),
-          weightDisplay,
-          E("button", { class: "step-btn", onclick: () => setWeight(si.weight + 2.5) }, "+2.5"),
-        ]),
-      ]),
-      E("div", { class: "input-col" }, [
-        E("div", { class: "field-label" }, "Reps"),
-        repsInput,
-      ]),
-    ]),
+    uniToggle,
+    inputBody,
     E("div", { class: "input-col" }, [E("div", { class: "field-label" }, "RPE (opcional)"), rpeSeg]),
     confirmBtn,
   ]);
 
   // Foca o campo de reps após montar (mantém o teclado aberto).
-  requestAnimationFrame(() => { repsInput.focus(); });
+  requestAnimationFrame(() => { focusEl && focusEl.focus(); });
 
   return E("section", { class: "screen" }, [
     navBar(exercise.name, { back: () => { state.setInput = null; pop(); }, inline: true }),
@@ -292,13 +368,41 @@ function setInputScreen(exerciseId) {
 }
 
 // ════════════ SELETOR DE EXERCÍCIO (folha) ════════════
-function openPicker(onSelect) {
+function openPicker(onSelect, defaultCategory) {
   let search = "";
   const overlay = E("div", { class: "overlay sheet-overlay" });
   const listEl = E("div", { class: "picker-list" });
 
   const close = () => overlay.remove();
   const select = (name) => { const t = name.trim(); if (!t) return; close(); onSelect(t); };
+
+  // Passo de criação: escolhe em qual divisão (Push/Pull/Upper/Lower) o novo
+  // exercício será alocado antes de adicioná-lo ao treino.
+  function startCreate(name) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    let chosen = db.TRAINING_TYPES.includes(defaultCategory) ? defaultCategory : db.TRAINING_TYPES[0];
+    listEl.innerHTML = "";
+    const seg = E("div", { class: "segmented" }, db.TRAINING_TYPES.map((t) =>
+      E("button", {
+        class: "seg" + (t === chosen ? " active" : ""),
+        onclick: (e) => {
+          chosen = t;
+          seg.querySelectorAll(".seg").forEach((b) => b.classList.remove("active"));
+          e.currentTarget.classList.add("active");
+        },
+      }, t)
+    ));
+    listEl.appendChild(E("div", { class: "create-cat" }, [
+      E("div", { class: "section-header" }, `Criar “${trimmed}”`),
+      E("div", { class: "field-label create-cat-label" }, "Em qual divisão de treino?"),
+      seg,
+      E("button", {
+        class: "btn-primary", onclick: () => { db.createCatalogExercise(trimmed, chosen); select(trimmed); },
+      }, "Criar e adicionar"),
+      E("button", { class: "nav-btn create-cat-back", onclick: renderList }, "Voltar"),
+    ]));
+  }
 
   function renderList() {
     listEl.innerHTML = "";
@@ -309,7 +413,7 @@ function openPicker(onSelect) {
 
     if (canCreate) {
       listEl.appendChild(E("div", { class: "card list" }, [
-        E("button", { class: "row tappable accent", onclick: () => select(search) },
+        E("button", { class: "row tappable accent", onclick: () => startCreate(search) },
           [icon("plus", "icon"), E("span", { class: "row-title accent" }, `Criar “${search.trim()}”`)]),
       ]));
     }
@@ -399,6 +503,7 @@ function sessionDetailScreen(sessionId) {
       E("div", { class: "card list" }, db.orderedSets(ex).map((set) =>
         E("div", { class: "set-row detail" }, [
           E("span", { class: "muted" }, `Série ${set.setNumber}`),
+          set.side ? E("span", { class: "side-badge" }, sideLabel(set.side)) : null,
           E("span", { class: "spacer" }),
           E("span", { class: "set-weight" }, fmt.weight(set.weightKg)),
           E("span", { class: "muted" }, `× ${set.reps}`),

@@ -1,5 +1,5 @@
 //
-// format.js — Formatadores e fórmulas (espelha Formatters.swift e EpleyFormula.swift).
+// format.js — Formatadores e fórmulas (datas, peso, duração, Epley).
 //
 
 const MESES = [
@@ -30,7 +30,7 @@ export function duration(seconds) {
   return `${secs}s`;
 }
 
-// ISO 8601 com precisão de segundos (igual ao ISO8601DateFormatter do Swift): sem milissegundos.
+// ISO 8601 com precisão de segundos (sem milissegundos), igual ao formato do CSV.
 export function isoString(ms) {
   return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 }

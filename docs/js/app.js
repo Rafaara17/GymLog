@@ -1,13 +1,13 @@
 //
-// app.js — Camada de interface do GymLog (espelha as Views SwiftUI).
+// app.js — Camada de interface do GymLog.
 //
 // TabView (Treino, Histórico, Stats) + navegação por pilha + folhas modais,
-// reproduzindo o fluxo do app nativo sobre a camada de dados em store.js.
+// estilo iOS, sobre a camada de dados em store.js.
 //
 
 import * as db from "./store.js";
 import * as fmt from "./format.js";
-import { volumeChart, lineChart, barChart, TYPE_COLORS } from "./charts.js";
+import { volumeChart, lineChart, barChart, heatmapChart, TYPE_COLORS } from "./charts.js";
 
 // ── Mini-helper de DOM (hyperscript) ───────────────────────────────────────
 function E(tag, attrs = {}, children = []) {
@@ -440,6 +440,7 @@ function statsRoot() {
   return E("section", { class: "screen" }, [
     navBar("Estatísticas"),
     E("div", { class: "scroll" }, [
+      heatmapCard(db.activityCalendar(sessions)),
       chartCard("Volume semanal por tipo", volumeChart(db.weeklyVolume(sessions))),
       ex ? E("div", { class: "stats-ex" }, [
         E("div", { class: "select-wrap" }, [selector]),
@@ -454,6 +455,27 @@ function chartCard(title, svgHtml) {
   return E("div", { class: "chart-card" }, [
     E("div", { class: "chart-title" }, title),
     E("div", { class: "chart-body", html: svgHtml }),
+  ]);
+}
+
+// Card do mapa de atividade (estilo GitHub): corpo rolável na horizontal,
+// posicionado no presente, com legenda Menos → Mais.
+function heatmapCard(weeks) {
+  const activeDays = weeks.reduce((sum, wk) => sum + wk.days.filter((d) => d.count > 0).length, 0);
+  const scale = E("div", { class: "hm-legend" }, [
+    E("span", { class: "hm-legend-label" }, "Menos"),
+    ...[0, 1, 2, 3, 4].map((l) => E("span", { class: `hm hm-${l} hm-swatch` })),
+    E("span", { class: "hm-legend-label" }, "Mais"),
+  ]);
+  const body = E("div", { class: "chart-body hm-scroll", html: heatmapChart(weeks) });
+  // Posiciona a rolagem no presente (extremidade direita), como no GitHub.
+  requestAnimationFrame(() => { body.scrollLeft = body.scrollWidth; });
+
+  return E("div", { class: "chart-card" }, [
+    E("div", { class: "chart-title" }, "Atividade"),
+    E("div", { class: "chart-sub muted sm" }, activeDays ? `${activeDays} dias na academia no último ano` : "Seus dias de treino aparecem aqui."),
+    body,
+    scale,
   ]);
 }
 

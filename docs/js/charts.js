@@ -1,7 +1,7 @@
 //
-// charts.js — Gráficos em SVG puro (sem dependências), espelhando as telas
-// Swift Charts: VolumeChart (barras empilhadas), OneRMChart (linha) e
-// LoadProgressChart (barras). Usam variáveis CSS para acompanhar o tema.
+// charts.js — Gráficos em SVG puro (sem dependências): volume semanal (barras
+// empilhadas), 1RM estimado (linha), carga máxima (barras) e mapa de atividade
+// estilo GitHub. Usam variáveis CSS para acompanhar o tema.
 //
 
 import { dayMonth } from "./format.js";
@@ -60,6 +60,64 @@ function xLabels(items, labelFn) {
 
 function empty(msg) {
   return `<div class="chart-empty">${msg}</div>`;
+}
+
+// ── Mapa de atividade estilo GitHub (quadradinhos por dia) ─────────────────
+const MES_ABBR = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const DOW_ABBR = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+
+// Nível de intensidade 0–4 a partir do volume do dia (0 = folga).
+function activityLevel(day, maxVolume) {
+  if (day.count <= 0) return 0;
+  const ratio = maxVolume > 0 ? day.volume / maxVolume : 1;
+  if (ratio <= 0.25) return 1;
+  if (ratio <= 0.5) return 2;
+  if (ratio <= 0.75) return 3;
+  return 4;
+}
+
+export function heatmapChart(weeks) {
+  if (!weeks.length) return empty("Sem dados.");
+
+  const cell = 13, gap = 3, rows = 7;
+  const leftPad = 24; // espaço para rótulos dos dias da semana
+  const topPad = 16;  // espaço para rótulos dos meses
+  const step = cell + gap;
+  const w = leftPad + weeks.length * step;
+  const h = topPad + rows * step;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayMs = today.getTime();
+
+  const maxVolume = Math.max(0, ...weeks.flatMap((wk) => wk.days.map((d) => d.volume)));
+
+  let cells = "", months = "";
+  let lastMonth = -1;
+  weeks.forEach((wk, ci) => {
+    const x = leftPad + ci * step;
+    // Rótulo do mês ao mudar de mês (na primeira semana onde o mês aparece).
+    const m = new Date(wk.days[0].date).getMonth();
+    if (m !== lastMonth) {
+      lastMonth = m;
+      months += `<text x="${x}" y="10" class="hm-label">${MES_ABBR[m]}</text>`;
+    }
+    wk.days.forEach((d, ri) => {
+      if (d.date > todayMs) return; // não desenha dias futuros (grade termina hoje)
+      const y = topPad + ri * step;
+      const lvl = activityLevel(d, maxVolume);
+      const date = new Date(d.date).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+      const tip = d.count > 0 ? `${date}: ${d.count} treino${d.count > 1 ? "s" : ""} · ${fmtK(d.volume)} kg` : `${date}: sem treino`;
+      cells += `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="3" class="hm hm-${lvl}"><title>${tip}</title></rect>`;
+    });
+  });
+
+  // Rótulos seg/qua/sex (linhas 1, 3, 5), como no GitHub.
+  let dows = "";
+  [1, 3, 5].forEach((ri) => {
+    const y = topPad + ri * step + cell - 3;
+    dows += `<text x="0" y="${y}" class="hm-label">${DOW_ABBR[ri]}</text>`;
+  });
+
+  return `<svg class="heatmap-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img">${months}${dows}${cells}</svg>`;
 }
 
 // ── Volume semanal por tipo (barras empilhadas) ───────────────────────────

@@ -1,19 +1,19 @@
 //
 // store.js — Camada de dados do GymLog.
 //
-// Espelha os @Model (Session, Exercise, WorkoutSet, ExerciseCatalog), os
-// ViewModels (Workout, History, Stats) e os Services (Export, Import) do app
-// Swift. Persistência local em localStorage (equivalente ao SwiftData local).
+// Modelos (Session, Exercise, WorkoutSet, ExerciseCatalog), métricas derivadas,
+// operações de treino, histórico, estatísticas e exportação/importação CSV.
+// Persistência local em localStorage.
 //
 
 import { epley, isoString, startOfDay, startOfWeek, monthKey, monthYear } from "./format.js";
 
 const STORAGE_KEY = "gymlog.db.v1";
 
-// Tipos de treino (espelha TrainingType).
+// Tipos de treino.
 export const TRAINING_TYPES = ["Push", "Pull", "Upper", "Lower"];
 
-// Catálogo semente, inserido na primeira execução (espelha ExerciseCatalog.seed).
+// Catálogo semente, inserido na primeira execução.
 const CATALOG_SEED = [
   ["Supino Reto", "Push"], ["Supino Inclinado", "Push"],
   ["Desenvolvimento Militar", "Push"], ["Tríceps Corda", "Push"],
@@ -70,7 +70,7 @@ function registerInCatalog(name) {
   db.catalog.push({ id: uid(), name: trimmed, category: null });
 }
 
-// ── Métricas derivadas (espelha as computed properties dos @Model) ────────
+// ── Métricas derivadas dos modelos ────────────────────────────────────────
 export function setVolume(set) { return set.weightKg * set.reps; }
 export function set1RM(set) { return epley(set.weightKg, set.reps); }
 
@@ -123,7 +123,7 @@ export function exerciseById(id) {
   return null;
 }
 
-// ── Operações de treino (espelha WorkoutViewModel) ────────────────────────
+// ── Operações de treino ───────────────────────────────────────────────────
 export function startSession(type) {
   const now = Date.now();
   const session = {
@@ -177,7 +177,7 @@ export function deleteSession(id) {
   save();
 }
 
-// Resumo do último treino com este exercício (espelha WorkoutViewModel.lastWorkout).
+// Resumo do último treino com este exercício.
 export function lastWorkout(exerciseName) {
   for (const session of endedSessions()) {
     const sets = session.exercises
@@ -199,7 +199,7 @@ export function lastWorkout(exerciseName) {
   return null;
 }
 
-// ── Histórico (espelha HistoryViewModel.groupByMonth) ─────────────────────
+// ── Histórico (agrupamento por mês) ───────────────────────────────────────
 export function groupByMonth(sessions) {
   const buckets = new Map();
   for (const s of sessions) {
@@ -215,7 +215,7 @@ export function groupByMonth(sessions) {
     }));
 }
 
-// ── Estatísticas (espelha StatsViewModel) ─────────────────────────────────
+// ── Estatísticas ──────────────────────────────────────────────────────────
 export function exerciseNames(sessions) {
   const names = new Set();
   sessions.forEach((s) => s.exercises.forEach((e) => names.add(e.name)));
@@ -247,6 +247,36 @@ export function loadProgress(exerciseName, sessions) {
   return [...byDay.entries()].map(([date, value]) => ({ date, value })).sort((a, b) => a.date - b.date);
 }
 
+// Calendário de atividade estilo GitHub.
+// Retorna `weeks` semanas (colunas), cada uma com 7 dias (domingo→sábado),
+// terminando na semana atual. Cada célula traz { date, count, volume } — com
+// count/volume = 0 nos dias de folga. A intensidade (cor) é derivada na camada
+// de visualização a partir do volume.
+export function activityCalendar(sessions, weeks = 53) {
+  const DAY = 86_400_000;
+  const byDay = new Map(); // dayMs -> { count, volume }
+  for (const s of sessions) {
+    const day = startOfDay(s.date);
+    const cur = byDay.get(day) || { count: 0, volume: 0 };
+    cur.count += 1;
+    cur.volume += sessionVolume(s);
+    byDay.set(day, cur);
+  }
+
+  const firstWeek = startOfWeek(Date.now()) - (weeks - 1) * 7 * DAY;
+  const result = [];
+  for (let w = 0; w < weeks; w++) {
+    const days = [];
+    for (let d = 0; d < 7; d++) {
+      const day = startOfDay(firstWeek + (w * 7 + d) * DAY);
+      const info = byDay.get(day) || { count: 0, volume: 0 };
+      days.push({ date: day, count: info.count, volume: info.volume });
+    }
+    result.push({ weekStart: startOfDay(firstWeek + w * 7 * DAY), days });
+  }
+  return result;
+}
+
 export function weeklyVolume(sessions) {
   const bucket = new Map();
   for (const s of sessions) {
@@ -258,7 +288,7 @@ export function weeklyVolume(sessions) {
   return [...bucket.values()].sort((a, b) => a.weekStart - b.weekStart);
 }
 
-// ── Exportação CSV (espelha ExportService.generateCSV) ────────────────────
+// ── Exportação CSV ────────────────────────────────────────────────────────
 const CSV_HEADER =
   "date,training_type,exercise,set,weight_kg,reps,estimated_1rm,rpe,done_at,rest_seconds";
 
@@ -293,7 +323,7 @@ export function exportFilename() {
   return `gymlog_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.csv`;
 }
 
-// ── Importação CSV (espelha ImportService.importCSV) ──────────────────────
+// ── Importação CSV ────────────────────────────────────────────────────────
 function parseCSVLine(line) {
   const fields = [];
   let current = "", inside = false;

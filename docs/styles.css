@@ -15,6 +15,12 @@
   --danger: #ff3b30;
   --fill: rgba(118, 118, 128, 0.12);
   --seg-active: #ffffff;
+  /* Escala de cores do mapa de atividade (estilo GitHub, tema claro). */
+  --hm-0: rgba(118, 118, 128, 0.12);
+  --hm-1: #9be9a8;
+  --hm-2: #40c463;
+  --hm-3: #30a14e;
+  --hm-4: #216e39;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -32,6 +38,12 @@
     --danger: #ff453a;
     --fill: rgba(118, 118, 128, 0.24);
     --seg-active: #636366;
+    /* Escala de cores do mapa de atividade (estilo GitHub, tema escuro). */
+    --hm-0: rgba(118, 118, 128, 0.18);
+    --hm-1: #0e4429;
+    --hm-2: #006d32;
+    --hm-3: #26a641;
+    --hm-4: #39d353;
   }
 }
 
@@ -214,6 +226,25 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 .grid { stroke: var(--separator); stroke-width: 1; }
 .axis-label { fill: var(--muted); font-size: 10px; }
 .line { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+
+/* ── Mapa de atividade (estilo GitHub) ── */
+.chart-sub { margin: -2px 0 10px; }
+.hm-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+.heatmap-svg { display: block; }
+.hm-label { fill: var(--muted); font-size: 9px; }
+.hm-0 { fill: var(--hm-0); }
+.hm-1 { fill: var(--hm-1); }
+.hm-2 { fill: var(--hm-2); }
+.hm-3 { fill: var(--hm-3); }
+.hm-4 { fill: var(--hm-4); }
+.hm-legend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 10px; }
+.hm-legend-label { font-size: 11px; color: var(--muted); }
+.hm-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.hm-swatch.hm-0 { background: var(--hm-0); }
+.hm-swatch.hm-1 { background: var(--hm-1); }
+.hm-swatch.hm-2 { background: var(--hm-2); }
+.hm-swatch.hm-3 { background: var(--hm-3); }
+.hm-swatch.hm-4 { background: var(--hm-4); }
 .area { fill: var(--accent-soft); stroke: none; }
 .dot { fill: var(--accent); }
 .bar { fill: var(--accent); }

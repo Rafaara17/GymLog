@@ -27,6 +27,8 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
+  // APIs externas (ex.: Open Food Facts) vão direto à rede, sem cache.
+  if (new URL(req.url).origin !== self.location.origin) return;
   event.respondWith(
     caches.match(req).then((cached) =>
       cached ||

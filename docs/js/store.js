@@ -414,6 +414,67 @@ export function searchFoods(query, limit = 60) {
   return results.slice(0, limit);
 }
 
+// ── Busca de alimentos na internet (Open Food Facts) ─────────────────────
+// A busca envia apenas o termo digitado; o produto escolhido é salvo em
+// "Meus alimentos" (db.foods) e passa a funcionar offline.
+const OFF_SEARCH_URL = "https://br.openfoodfacts.org/cgi/search.pl";
+
+export async function searchOnlineFoods(query, limit = 20) {
+  const q = query.trim();
+  if (!q) return [];
+  const params = new URLSearchParams({
+    search_terms: q, search_simple: "1", action: "process", json: "1",
+    page_size: String(limit),
+    fields: "code,product_name,product_name_pt,brands,nutriments",
+  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(`${OFF_SEARCH_URL}?${params}`, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const round1 = (v) => Math.max(0, Math.round((parseFloat(v) || 0) * 10) / 10);
+    const results = [];
+    for (const p of data.products || []) {
+      const baseName = (p.product_name_pt || p.product_name || "").trim();
+      if (!baseName) continue;
+      const n = p.nutriments || {};
+      // kcal direto, ou convertido de kJ (energy_100g).
+      let kcal = parseFloat(n["energy-kcal_100g"]);
+      if (!Number.isFinite(kcal) || kcal <= 0) {
+        const kj = parseFloat(n.energy_100g);
+        if (!Number.isFinite(kj) || kj <= 0) continue;
+        kcal = kj / 4.184;
+      }
+      const brand = (p.brands || "").split(",")[0].trim();
+      results.push({
+        source: "off", refId: p.code || null,
+        name: brand && !baseName.toLowerCase().includes(brand.toLowerCase())
+          ? `${baseName} — ${brand}` : baseName,
+        category: "Internet",
+        per100: {
+          kcal: round1(kcal),
+          protein: round1(n.proteins_100g),
+          carbs: round1(n.carbohydrates_100g),
+          fat: round1(n.fat_100g),
+        },
+        unitName: null, unitGrams: null,
+      });
+    }
+    return results;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Persiste um resultado da internet como alimento pessoal (dedupe por nome).
+export function saveOnlineFood(ref) {
+  const existing = db.foods.find((f) => normalize(f.name) === normalize(ref.name));
+  if (existing) return resolveFoodRef({ source: "custom", refId: existing.id });
+  const food = createFood({ name: ref.name, per100: ref.per100 });
+  return resolveFoodRef({ source: "custom", refId: food.id });
+}
+
 // ── Refeições ─────────────────────────────────────────────────────────────
 // Cada entrada guarda um retrato (per100) do alimento no momento do registro:
 // editar o alimento (ou regenerar o TACO) depois não reescreve o histórico.

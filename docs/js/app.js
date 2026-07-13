@@ -45,6 +45,7 @@ const ICONS = {
   heart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5C7.2 16.2 3.5 13 3.5 9.1 3.5 6.6 5.4 4.5 7.9 4.5c1.6 0 3.1.9 4.1 2.4 1-1.5 2.5-2.4 4.1-2.4 2.5 0 4.4 2.1 4.4 4.6 0 3.9-3.7 7.1-8.5 11.4z"/></svg>',
   flame: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5c.4 3-.9 4.6-2.2 6.2C8.4 10.4 7 12.1 7 14.4a5 5 0 0 0 10 0c0-1.1-.3-2.1-.9-3-.7.9-1.5 1.4-2.4 1.5.9-2.7.3-6.3-1.7-10.4z"/></svg>',
   forward: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 5 16 12 9 19"/></svg>',
+  globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.4 3.8 5.5 3.8 9s-1.3 6.6-3.8 9c-2.5-2.4-3.8-5.5-3.8-9S9.5 5.4 12 3z"/></svg>',
 };
 
 function icon(name, cls = "icon") {
@@ -707,16 +708,38 @@ function openFoodPicker(mealType, dayMs) {
   const close = () => overlay.remove();
 
   function foodRow(ref) {
-    return E("button", { class: "row tappable", onclick: () => showAmount(ref) }, [
+    // Resultado da internet é salvo em "Meus alimentos" ao ser escolhido.
+    const pick = () => showAmount(ref.source === "off" ? db.saveOnlineFood(ref) : ref);
+    return E("button", { class: "row tappable", onclick: pick }, [
       E("div", { class: "row-main" }, [
         E("div", { class: "row-title" }, ref.name),
         E("div", { class: "row-sub" }, [
           chip(`${Math.round(ref.per100.kcal)} kcal / 100 g`),
           chip(`P ${ref.per100.protein} g`),
           ref.source === "custom" ? chip("meu") : null,
+          ref.source === "off" ? chip("internet") : null,
         ]),
       ]),
     ]);
+  }
+
+  // Busca explícita no Open Food Facts; resultados entram abaixo dos locais.
+  async function searchOnline(q, container) {
+    container.innerHTML = "";
+    container.appendChild(E("p", { class: "empty-inline center" }, "Buscando na internet…"));
+    try {
+      const results = await db.searchOnlineFoods(q);
+      container.innerHTML = "";
+      if (!results.length) {
+        container.appendChild(E("p", { class: "empty-inline center" }, "Nenhum produto encontrado na internet."));
+        return;
+      }
+      container.appendChild(E("div", { class: "section-header" }, "Internet (Open Food Facts)"));
+      container.appendChild(E("div", { class: "card list" }, results.map(foodRow)));
+    } catch (e) {
+      container.innerHTML = "";
+      container.appendChild(E("p", { class: "empty-inline center" }, "Não foi possível buscar agora — verifique a internet."));
+    }
   }
 
   function renderList() {
@@ -749,8 +772,15 @@ function openFoodPicker(mealType, dayMs) {
     if (results.length) {
       listEl.appendChild(E("div", { class: "card list" }, results.map(foodRow)));
     } else {
-      listEl.appendChild(E("p", { class: "empty-inline center" }, "Nada encontrado na TACO. Crie o alimento acima."));
+      listEl.appendChild(E("p", { class: "empty-inline center" }, "Nada encontrado na TACO. Busque na internet ou crie o alimento."));
     }
+    // Busca online sob demanda (um toque; não a cada tecla).
+    const onlineWrap = E("div", {});
+    onlineWrap.appendChild(E("div", { class: "card list" }, [
+      E("button", { class: "row tappable accent", onclick: () => searchOnline(q, onlineWrap) },
+        [icon("globe", "icon"), E("span", { class: "row-title accent" }, `Buscar “${q}” na internet`)]),
+    ]));
+    listEl.appendChild(onlineWrap);
   }
 
   // Passo de criação de alimento personalizado (valores por 100 g).

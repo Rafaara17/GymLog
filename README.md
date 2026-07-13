@@ -69,6 +69,11 @@ tools/
   app calcula kcal, proteína, carboidrato e gordura. Resumo do dia com
   "Restam X kcal", barra de progresso e macros; setas para ver/editar dias
   anteriores.
+- **Busca na internet**: produtos industrializados que não estão na TACO
+  podem ser buscados no **Open Food Facts** (botão "Buscar na internet" no
+  seletor de alimento). O produto escolhido é salvo em "Meus alimentos" e
+  passa a funcionar **offline** dali em diante. Privacidade: a busca envia
+  apenas o termo digitado à API; nenhum dado seu sai do aparelho.
 - **Perfil e meta calórica**: peso, altura, idade, sexo e nível de atividade
   → TMB (Mifflin-St Jeor) → gasto diário (TDEE) → meta sugerida pelo objetivo
   (perder/manter/ganhar), ou meta manual em kcal. Toggle para o cardio somar

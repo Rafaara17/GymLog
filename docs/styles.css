@@ -224,6 +224,42 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 .action-btn.cancel { background: var(--bg-elevated); border-radius: 14px; font-weight: 600; }
 .action-btn:active { background: var(--fill); }
 
+/* ── Dieta ── */
+.day-nav { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px 0; }
+.day-btn { background: var(--fill); border: none; color: var(--accent); border-radius: 9px; padding: 6px 14px; display: inline-flex; align-items: center; }
+.day-btn:disabled { opacity: 0.35; }
+.day-btn:active { background: var(--accent-soft); }
+.day-label { background: none; border: none; color: var(--text); font-size: 17px; font-weight: 600; padding: 6px 12px; }
+
+.diet-summary { margin: 12px 16px 0; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.kcal-remaining { font-size: 26px; font-weight: 700; }
+.kcal-remaining.over { color: var(--danger); }
+.kcal-bar { height: 10px; border-radius: 5px; background: var(--fill); overflow: hidden; }
+.kcal-bar-fill { height: 100%; border-radius: 5px; background: var(--green); transition: width 0.3s; }
+.kcal-bar-fill.over { background: var(--danger); }
+.macro-row { display: flex; gap: 8px; }
+.macro { flex: 1; background: var(--fill); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.macro-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
+.macro-value { font-size: 15px; font-weight: 600; }
+.cardio-line { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); }
+.row-kcal { margin-left: auto; white-space: nowrap; font-weight: 500; }
+.sh-split { display: flex; justify-content: space-between; align-items: baseline; }
+.sh-value { text-transform: none; }
+
+/* Folha de quantidade / edição de alimento */
+.sheet.compact { height: auto; max-height: 92%; }
+.amount-form { padding: 12px 16px calc(24px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 14px; align-items: center; overflow-y: auto; }
+.amount-food { font-size: 18px; font-weight: 600; text-align: center; }
+.amount-preview { font-size: 14px; color: var(--muted); text-align: center; }
+.unit-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.unit-chip { background: var(--fill); color: var(--accent); border: none; border-radius: 16px; padding: 6px 12px; font-size: 13px; font-weight: 600; }
+.unit-chip:active { background: var(--accent-soft); }
+.create-food-form { padding: 0 0 20px; display: flex; flex-direction: column; gap: 4px; }
+.create-food-form .card { margin: 4px 16px; }
+.create-food-form .btn-primary { margin: 16px 16px 0; width: auto; }
+.create-food-form .create-cat-back { align-self: center; }
+.form-input.wide { width: 150px; }
+
 /* ── Perfil / formulários ── */
 .form-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; min-height: 44px; }
 .card.list > .form-row + .form-row { border-top: 0.5px solid var(--separator); }

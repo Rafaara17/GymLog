@@ -80,7 +80,7 @@ function makeStepperField(initial, { step = 1, min = 0, decimals = 1 } = {}, onC
     input,
     E("button", { class: "step-btn", onclick: () => { commit(value + step); sync(); } }, `+${show(step)}`),
   ]);
-  return { el, get: () => value };
+  return { el, get: () => value, set: (v) => { commit(v); sync(); } };
 }
 
 // Campo de peso da série: passos de 2.5 kg.
@@ -467,31 +467,349 @@ function dietDay() {
   return state.dietDate != null ? state.dietDate : fmt.startOfDay(Date.now());
 }
 
+const DAY_MS = 86_400_000;
+
+// Refeição sugerida pelo horário.
+function suggestMealType(ms = Date.now()) {
+  const d = new Date(ms);
+  const h = d.getHours() + d.getMinutes() / 60;
+  if (h < 10.5) return "cafe";
+  if (h < 14.5) return "almoco";
+  if (h < 18.5) return "lanche";
+  return "jantar";
+}
+
+// Registro em outro dia entra ao meio-dia (ordem estável); hoje entra agora.
+function mealDate(dayMs) {
+  return dayMs === fmt.startOfDay(Date.now()) ? Date.now() : dayMs + DAY_MS / 2;
+}
+
 function dietRoot() {
+  const day = dietDay();
+  const bal = db.dailyBalance(day);
+  const groups = db.mealsForDay(day);
   const trailing = [
     E("button", { class: "nav-btn icon-btn", title: "Perfil", onclick: () => push({ name: "profile" }) }, [icon("user", "icon")]),
   ];
-  const target = db.dailyTarget();
 
-  if (target == null) {
-    return E("section", { class: "screen" }, [
-      navBar("Dieta", { trailing }),
-      E("div", { class: "empty-state" }, [
-        icon("food", "empty-icon"),
-        E("h2", {}, "Configure sua meta"),
-        E("p", { class: "muted" }, "Preencha seu perfil para calcular sua meta diária de calorias."),
-        E("button", { class: "btn-primary", onclick: () => push({ name: "profile" }) }, "Configurar perfil"),
+  const sections = db.MEAL_TYPES.map(([id, label]) => {
+    const entries = groups[id] || [];
+    const subtotal = entries.reduce((s, e) => s + db.entryMacros(e).kcal, 0);
+    const rows = entries.map((entry) => {
+      const m = db.entryMacros(entry);
+      const row = E("button", { class: "row tappable", onclick: () => openMealEntryEditor(entry) }, [
+        E("div", { class: "row-main" }, [
+          E("div", { class: "row-title" }, entry.name),
+          E("div", { class: "row-sub" }, [
+            chip(fmt.grams(entry.grams)),
+            m.protein >= 1 ? chip(`P ${Math.round(m.protein)} g`) : null,
+          ]),
+        ]),
+        E("span", { class: "row-kcal" }, fmt.kcal(m.kcal)),
+      ]);
+      attachLongPress(row, () => confirmDelete("Apagar alimento?", () => { db.deleteMealEntry(entry.id); render(); }));
+      return row;
+    });
+
+    return E("div", {}, [
+      E("div", { class: "section-header sh-split" }, [
+        E("span", {}, label),
+        subtotal > 0 ? E("span", { class: "sh-value" }, fmt.kcal(subtotal)) : null,
+      ]),
+      E("div", { class: "card list" }, [
+        ...rows,
+        E("button", { class: "row tappable accent", onclick: () => openFoodPicker(id, day) },
+          [icon("plus", "icon"), E("span", { class: "row-title accent" }, "Adicionar alimento")]),
       ]),
     ]);
-  }
+  });
 
   return E("section", { class: "screen" }, [
     navBar("Dieta", { trailing }),
     E("div", { class: "scroll" }, [
-      E("div", { class: "section-header" }, "Meta"),
-      E("div", { class: "card metrics" }, [metricRow("Meta diária", fmt.kcal(target))]),
+      dayNav(),
+      dailySummaryCard(bal),
+      ...sections,
+      bal.logged ? E("p", { class: "hint" }, "Toque para editar · segure para apagar") : null,
     ]),
   ]);
+}
+
+// Navegador de dia: ‹ Hoje ›.
+function dayNav() {
+  const day = dietDay();
+  const today = fmt.startOfDay(Date.now());
+  const label = day === today ? "Hoje"
+    : day === fmt.startOfDay(today - DAY_MS / 2) ? "Ontem"
+    : fmt.shortDate(day);
+  const go = (d) => { state.dietDate = d >= today ? null : d; render(); };
+  return E("div", { class: "day-nav" }, [
+    E("button", { class: "day-btn", onclick: () => go(fmt.startOfDay(day - DAY_MS / 2)) }, [icon("back", "icon sm")]),
+    E("button", { class: "day-label", onclick: () => go(today) }, label),
+    E("button", { class: "day-btn", disabled: day >= today, onclick: () => go(fmt.startOfDay(day + DAY_MS * 1.5)) }, [icon("forward", "icon sm")]),
+  ]);
+}
+
+// Card-resumo do dia: saldo, barra de progresso, macros e cardio.
+function dailySummaryCard(bal) {
+  const macroRow = E("div", { class: "macro-row" }, [
+    ["Proteína", bal.macros.protein], ["Carboidrato", bal.macros.carbs], ["Gordura", bal.macros.fat],
+  ].map(([label, v]) => E("div", { class: "macro" }, [
+    E("span", { class: "macro-label" }, label),
+    E("span", { class: "macro-value" }, `${Math.round(v)} g`),
+  ])));
+
+  if (bal.target == null) {
+    return E("div", { class: "card diet-summary" }, [
+      E("div", { class: "kcal-remaining" }, fmt.kcal(bal.consumed)),
+      E("div", { class: "muted sm" }, "kcal consumidas neste dia"),
+      macroRow,
+      E("button", { class: "btn-primary", onclick: () => push({ name: "profile" }) }, "Configurar meta de calorias"),
+    ]);
+  }
+
+  const over = bal.remaining < 0;
+  const pct = Math.min(100, bal.allowance > 0 ? (bal.consumed / bal.allowance) * 100 : 0);
+  const cardioCounted = db.profile()?.countCardioInBalance;
+  return E("div", { class: "card diet-summary" }, [
+    E("div", { class: "kcal-remaining" + (over ? " over" : "") },
+      over ? `Excedeu ${fmt.kcal(-bal.remaining)}` : `Restam ${fmt.kcal(bal.remaining)}`),
+    E("div", { class: "kcal-bar" }, [
+      E("div", { class: "kcal-bar-fill" + (over ? " over" : ""), style: `width:${pct.toFixed(1)}%` }),
+    ]),
+    E("div", { class: "muted sm" }, `${fmt.kcal(bal.consumed)} de ${fmt.kcal(bal.allowance)}`),
+    macroRow,
+    bal.cardioKcal > 0 ? E("div", { class: "cardio-line" }, [
+      icon("flame", "icon sm"),
+      E("span", {}, cardioCounted
+        ? `Cardio: +${fmt.kcal(bal.cardioKcal)} na meta do dia`
+        : `Cardio: ${fmt.kcal(bal.cardioKcal)} gastas (fora da meta)`),
+    ]) : null,
+  ]);
+}
+
+// ════════════ SELETOR DE ALIMENTO (folha) ════════════
+function openFoodPicker(mealType, dayMs) {
+  let search = "";
+  const overlay = E("div", { class: "overlay sheet-overlay" });
+  const listEl = E("div", { class: "picker-list" });
+  const searchBar = E("div", { class: "search-bar" });
+  const navTitle = E("h1", { class: "nav-title" }, "Alimento");
+
+  const close = () => overlay.remove();
+
+  function foodRow(ref) {
+    return E("button", { class: "row tappable", onclick: () => showAmount(ref) }, [
+      E("div", { class: "row-main" }, [
+        E("div", { class: "row-title" }, ref.name),
+        E("div", { class: "row-sub" }, [
+          chip(`${Math.round(ref.per100.kcal)} kcal / 100 g`),
+          chip(`P ${ref.per100.protein} g`),
+          ref.source === "custom" ? chip("meu") : null,
+        ]),
+      ]),
+    ]);
+  }
+
+  function renderList() {
+    listEl.innerHTML = "";
+    const q = search.trim();
+    if (!q) {
+      const recents = db.recentFoods();
+      const customs = db.customFoods().map((f) => db.resolveFoodRef({ source: "custom", refId: f.id }));
+      if (recents.length) {
+        listEl.appendChild(E("div", { class: "section-header" }, "Recentes"));
+        listEl.appendChild(E("div", { class: "card list" }, recents.map(foodRow)));
+      }
+      if (customs.length) {
+        listEl.appendChild(E("div", { class: "section-header" }, "Meus alimentos"));
+        listEl.appendChild(E("div", { class: "card list" }, customs.map(foodRow)));
+      }
+      if (!recents.length && !customs.length) {
+        listEl.appendChild(E("p", { class: "empty-inline center" }, "Busque um alimento da tabela TACO ou crie o seu."));
+      }
+      return;
+    }
+    const results = db.searchFoods(q);
+    const exact = results.some((r) => r.name.toLowerCase() === q.toLowerCase());
+    if (!exact) {
+      listEl.appendChild(E("div", { class: "card list" }, [
+        E("button", { class: "row tappable accent", onclick: () => showCreate(q) },
+          [icon("plus", "icon"), E("span", { class: "row-title accent" }, `Criar “${q}”`)]),
+      ]));
+    }
+    if (results.length) {
+      listEl.appendChild(E("div", { class: "card list" }, results.map(foodRow)));
+    } else {
+      listEl.appendChild(E("p", { class: "empty-inline center" }, "Nada encontrado na TACO. Crie o alimento acima."));
+    }
+  }
+
+  // Passo de criação de alimento personalizado (valores por 100 g).
+  function showCreate(name) {
+    navTitle.textContent = "Novo alimento";
+    searchBar.style.display = "none";
+    listEl.innerHTML = "";
+    const field = (label, placeholder, inputmode = "decimal") => {
+      const input = E("input", { class: "form-input wide", type: inputmode === "text" ? "text" : "number", inputmode, min: "0", placeholder });
+      return { row: E("div", { class: "form-row" }, [E("span", { class: "form-label" }, label), input]), input };
+    };
+    const nameField = field("Nome", "Ex.: Pão de queijo da vó", "text");
+    nameField.input.value = name;
+    const kcalField = field("kcal / 100 g", "250", "numeric");
+    const protField = field("Proteína (g)", "8");
+    const carbField = field("Carboidrato (g)", "30");
+    const fatField = field("Gordura (g)", "10");
+    const unitNameField = field("Nome da porção (opcional)", "fatia, unidade…", "text");
+    const unitGramsField = field("Gramas por porção", "50", "numeric");
+
+    const createBtn = E("button", {
+      class: "btn-primary",
+      onclick: () => {
+        const food = db.createFood({
+          name: nameField.input.value,
+          per100: { kcal: kcalField.input.value, protein: protField.input.value, carbs: carbField.input.value, fat: fatField.input.value },
+          unitName: unitNameField.input.value,
+          unitGrams: unitGramsField.input.value,
+        });
+        if (!food) return;
+        showAmount(db.resolveFoodRef({ source: "custom", refId: food.id }));
+      },
+    }, "Criar e adicionar");
+
+    listEl.appendChild(E("div", { class: "create-food-form" }, [
+      E("div", { class: "card list" }, [nameField.row]),
+      E("div", { class: "section-header" }, "Por 100 g"),
+      E("div", { class: "card list" }, [kcalField.row, protField.row, carbField.row, fatField.row]),
+      E("div", { class: "section-header" }, "Porção (opcional)"),
+      E("div", { class: "card list" }, [unitNameField.row, unitGramsField.row]),
+      createBtn,
+      E("button", { class: "nav-btn create-cat-back", onclick: () => { navTitle.textContent = "Alimento"; searchBar.style.display = ""; renderList(); } }, "Voltar"),
+    ]));
+  }
+
+  // Passo de quantidade: gramas + refeição, com prévia de kcal/macros.
+  function showAmount(ref) {
+    navTitle.textContent = "Quantidade";
+    searchBar.style.display = "none";
+    listEl.innerHTML = "";
+
+    let chosenMeal = mealType || suggestMealType();
+    const preview = E("div", { class: "amount-preview" });
+    const gramsField = makeStepperField(ref.unitGrams || 100, { step: 10, decimals: 0 }, () => updatePreview());
+    function updatePreview() {
+      const f = gramsField.get() / 100;
+      preview.textContent = `≈ ${fmt.kcal(ref.per100.kcal * f)} · P ${Math.round(ref.per100.protein * f)} g · C ${Math.round(ref.per100.carbs * f)} g · G ${Math.round(ref.per100.fat * f)} g`;
+    }
+    updatePreview();
+
+    const unitChips = ref.unitGrams ? E("div", { class: "unit-chips" }, [1, 2, 3].map((n) =>
+      E("button", { class: "unit-chip", onclick: () => { gramsField.set(n * ref.unitGrams); updatePreview(); } },
+        `${n} ${ref.unitName || "porção"}${n > 1 ? "s" : ""} (${fmt.grams(n * ref.unitGrams)})`)
+    )) : null;
+
+    const mealSeg = E("div", { class: "segmented small" }, db.MEAL_TYPES.map(([id, label]) =>
+      E("button", {
+        class: "seg" + (id === chosenMeal ? " active" : ""),
+        onclick: (e) => {
+          chosenMeal = id;
+          mealSeg.querySelectorAll(".seg").forEach((b) => b.classList.remove("active"));
+          e.currentTarget.classList.add("active");
+        },
+      }, label.replace("Café da manhã", "Café"))
+    ));
+
+    listEl.appendChild(E("div", { class: "amount-form" }, [
+      E("div", { class: "amount-food" }, ref.name),
+      E("div", { class: "field-label" }, "Quantidade (g)"),
+      gramsField.el,
+      unitChips,
+      preview,
+      E("div", { class: "field-label" }, "Refeição"),
+      mealSeg,
+      E("button", {
+        class: "btn-primary green",
+        onclick: () => {
+          const grams = gramsField.get();
+          if (grams <= 0) return;
+          db.logMeal({ foodRef: ref, name: ref.name, per100: ref.per100, grams, mealType: chosenMeal, date: mealDate(dayMs) });
+          close();
+          render();
+          toast(`Adicionado: ${ref.name}`);
+        },
+      }, [icon("check", "icon sm"), E("span", {}, "Adicionar")]),
+    ]));
+  }
+
+  const input = E("input", { class: "search-input", type: "text", placeholder: "Buscar alimento (TACO)", autocomplete: "off" });
+  input.addEventListener("input", () => { search = input.value; renderList(); });
+  searchBar.appendChild(input);
+
+  overlay.appendChild(E("div", { class: "sheet picker-sheet", onclick: (e) => e.stopPropagation() }, [
+    E("header", { class: "navbar inline sheet-nav" }, [
+      E("div", { class: "nav-side nav-left" }, [E("button", { class: "nav-btn", onclick: close }, "Cancelar")]),
+      navTitle,
+      E("div", { class: "nav-side nav-right" }, []),
+    ]),
+    searchBar,
+    listEl,
+  ]));
+  overlay.addEventListener("click", close);
+  document.body.appendChild(overlay);
+  renderList();
+  requestAnimationFrame(() => input.focus());
+}
+
+// Folha compacta para editar gramas/refeição de uma entrada existente.
+function openMealEntryEditor(entry) {
+  const overlay = E("div", { class: "overlay sheet-overlay" });
+  const close = () => overlay.remove();
+
+  let chosenMeal = entry.mealType;
+  const preview = E("div", { class: "amount-preview" });
+  const gramsField = makeStepperField(entry.grams, { step: 10, decimals: 0 }, () => updatePreview());
+  function updatePreview() {
+    const f = gramsField.get() / 100;
+    preview.textContent = `≈ ${fmt.kcal(entry.per100.kcal * f)} · P ${Math.round(entry.per100.protein * f)} g · C ${Math.round(entry.per100.carbs * f)} g · G ${Math.round(entry.per100.fat * f)} g`;
+  }
+  updatePreview();
+
+  const mealSeg = E("div", { class: "segmented small" }, db.MEAL_TYPES.map(([id, label]) =>
+    E("button", {
+      class: "seg" + (id === chosenMeal ? " active" : ""),
+      onclick: (e) => {
+        chosenMeal = id;
+        mealSeg.querySelectorAll(".seg").forEach((b) => b.classList.remove("active"));
+        e.currentTarget.classList.add("active");
+      },
+    }, label.replace("Café da manhã", "Café"))
+  ));
+
+  overlay.appendChild(E("div", { class: "sheet compact", onclick: (e) => e.stopPropagation() }, [
+    E("header", { class: "navbar inline sheet-nav" }, [
+      E("div", { class: "nav-side nav-left" }, [E("button", { class: "nav-btn", onclick: close }, "Cancelar")]),
+      E("h1", { class: "nav-title" }, "Editar"),
+      E("div", { class: "nav-side nav-right" }, []),
+    ]),
+    E("div", { class: "amount-form" }, [
+      E("div", { class: "amount-food" }, entry.name),
+      E("div", { class: "field-label" }, "Quantidade (g)"),
+      gramsField.el,
+      preview,
+      E("div", { class: "field-label" }, "Refeição"),
+      mealSeg,
+      E("button", {
+        class: "btn-primary",
+        onclick: () => {
+          db.updateMealEntry(entry.id, { grams: gramsField.get(), mealType: chosenMeal });
+          close();
+          render();
+        },
+      }, "Salvar"),
+    ]),
+  ]));
+  overlay.addEventListener("click", close);
+  document.body.appendChild(overlay);
 }
 
 // ════════════ PERFIL ════════════

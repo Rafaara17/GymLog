@@ -410,6 +410,94 @@ export function searchFoods(query, limit = 60) {
   return results.slice(0, limit);
 }
 
+// ── Refeições ─────────────────────────────────────────────────────────────
+// Cada entrada guarda um retrato (per100) do alimento no momento do registro:
+// editar o alimento (ou regenerar o TACO) depois não reescreve o histórico.
+
+export function logMeal({ foodRef, name, per100, grams, mealType, date = Date.now() }) {
+  const entry = {
+    id: uid(), date, mealType,
+    foodRef: { source: foodRef.source, refId: foodRef.refId },
+    name, grams,
+    per100: { kcal: per100.kcal, protein: per100.protein, carbs: per100.carbs, fat: per100.fat },
+  };
+  db.meals.push(entry);
+  save();
+  return entry;
+}
+
+export function updateMealEntry(id, { grams, mealType } = {}) {
+  const entry = db.meals.find((m) => m.id === id);
+  if (!entry) return;
+  if (grams != null && grams > 0) entry.grams = grams;
+  if (mealType) entry.mealType = mealType;
+  save();
+}
+
+export function deleteMealEntry(id) {
+  db.meals = db.meals.filter((m) => m.id !== id);
+  save();
+}
+
+// kcal e macros de uma entrada = per100 × gramas / 100.
+export function entryMacros(entry) {
+  const f = entry.grams / 100;
+  return {
+    kcal: entry.per100.kcal * f,
+    protein: entry.per100.protein * f,
+    carbs: entry.per100.carbs * f,
+    fat: entry.per100.fat * f,
+  };
+}
+
+// Entradas do dia agrupadas por refeição: { cafe: [...], almoco: [...], ... }.
+export function mealsForDay(dayMs) {
+  const groups = {};
+  for (const [id] of MEAL_TYPES) groups[id] = [];
+  for (const m of db.meals) {
+    if (startOfDay(m.date) !== dayMs) continue;
+    (groups[m.mealType] || (groups[m.mealType] = [])).push(m);
+  }
+  for (const list of Object.values(groups)) list.sort((a, b) => a.date - b.date);
+  return groups;
+}
+
+// Totais consumidos no dia.
+export function dailyNutrition(dayMs) {
+  const total = { kcal: 0, protein: 0, carbs: 0, fat: 0, entryCount: 0 };
+  for (const m of db.meals) {
+    if (startOfDay(m.date) !== dayMs) continue;
+    const x = entryMacros(m);
+    total.kcal += x.kcal;
+    total.protein += x.protein;
+    total.carbs += x.carbs;
+    total.fat += x.fat;
+    total.entryCount += 1;
+  }
+  return total;
+}
+
+// kcal de cardio registradas no dia.
+export function dailyCardioKcal(dayMs) {
+  return db.cardio.reduce((s, c) => s + (startOfDay(c.date) === dayMs ? c.kcal : 0), 0);
+}
+
+// Saldo do dia frente à meta. Se o perfil pedir (countCardioInBalance),
+// o cardio soma como gasto extra na "permissão" do dia.
+export function dailyBalance(dayMs) {
+  const p = db.profile;
+  const target = dailyTarget(p);
+  const macros = dailyNutrition(dayMs);
+  const cardioKcal = dailyCardioKcal(dayMs);
+  const allowance = target == null ? null : target + (p && p.countCardioInBalance ? cardioKcal : 0);
+  return {
+    target, allowance, cardioKcal, macros,
+    consumed: macros.kcal,
+    remaining: allowance == null ? null : allowance - macros.kcal,
+    logged: macros.entryCount > 0,
+  };
+}
+
 // ── Histórico (agrupamento por mês) ───────────────────────────────────────
 export function groupByMonth(sessions) {
   const buckets = new Map();

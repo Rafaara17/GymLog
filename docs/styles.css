@@ -329,6 +329,9 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 .area { fill: var(--accent-soft); stroke: none; }
 .dot { fill: var(--accent); }
 .bar { fill: var(--accent); }
+.bar-under { fill: var(--green); }
+.bar-over { fill: var(--danger); }
+.target-line { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 4; }
 
 /* ── Estado vazio ── */
 .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 40px; text-align: center; }

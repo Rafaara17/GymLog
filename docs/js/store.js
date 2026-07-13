@@ -499,6 +499,52 @@ export function dailyBalance(dayMs) {
   };
 }
 
+// ── Progresso nutricional ─────────────────────────────────────────────────
+const DAY_MS = 86_400_000;
+
+// Saldo diário dos últimos `days` dias (mais antigo → mais recente).
+// Dias sem refeição registrada vêm com logged: false.
+export function balanceHistory(days = 28) {
+  const today = startOfDay(Date.now());
+  const out = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const day = startOfDay(today - i * DAY_MS + DAY_MS / 2);
+    const b = dailyBalance(day);
+    out.push({
+      date: day, consumed: b.consumed, target: b.target,
+      allowance: b.allowance, cardioKcal: b.cardioKcal, logged: b.logged,
+    });
+  }
+  return out;
+}
+
+// Dias seguidos dentro da meta, terminando hoje (ou ontem, se hoje ainda
+// não tem registro). Hoje estourado zera a sequência.
+export function deficitStreak() {
+  let day = startOfDay(Date.now());
+  let streak = 0;
+  const today = dailyBalance(day);
+  if (today.logged) {
+    if (today.remaining == null || today.remaining < 0) return 0;
+    streak += 1;
+  }
+  for (;;) {
+    day = startOfDay(day - DAY_MS / 2);
+    const b = dailyBalance(day);
+    if (!b.logged || b.remaining == null || b.remaining < 0) break;
+    streak += 1;
+  }
+  return streak;
+}
+
+// Saldo médio (permissão − consumido) nos últimos `days` dias com registro.
+// Positivo = abaixo da meta (déficit); negativo = acima.
+export function avgDeficit(days = 7) {
+  const hist = balanceHistory(days).filter((d) => d.logged && d.allowance != null);
+  if (!hist.length) return null;
+  return hist.reduce((s, d) => s + (d.allowance - d.consumed), 0) / hist.length;
+}
+
 // ── Cardio ────────────────────────────────────────────────────────────────
 // kcal, MET e peso usados ficam gravados na entrada (mudar o perfil depois
 // não reescreve o histórico).

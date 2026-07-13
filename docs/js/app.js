@@ -7,7 +7,7 @@
 
 import * as db from "./store.js";
 import * as fmt from "./format.js";
-import { volumeChart, lineChart, barChart, heatmapChart, TYPE_COLORS } from "./charts.js";
+import { volumeChart, lineChart, barChart, heatmapChart, balanceChart, TYPE_COLORS } from "./charts.js";
 import { CARDIO_ACTIVITIES, INTENSITIES } from "./data/mets.js";
 
 // ── Mini-helper de DOM (hyperscript) ───────────────────────────────────────
@@ -1124,23 +1124,26 @@ function sessionDetailScreen(sessionId) {
 // ════════════ STATS ════════════
 function statsRoot() {
   const sessions = db.endedSessions();
-  if (!sessions.length) {
+  const balance = db.balanceHistory(28);
+  const hasNutrition = balance.some((d) => d.logged);
+
+  if (!sessions.length && !hasNutrition) {
     return E("section", { class: "screen" }, [
       navBar("Estatísticas"),
-      emptyState("chart", "Sem dados ainda", "Conclua alguns treinos para ver suas estatísticas."),
+      emptyState("chart", "Sem dados ainda", "Conclua treinos ou registre refeições para ver suas estatísticas."),
     ]);
   }
 
-  const names = db.exerciseNames(sessions);
-  if (state.statsExercise == null || !names.includes(state.statsExercise)) state.statsExercise = names[0] || null;
+  const children = [];
 
-  const selector = E("select", { class: "select", onchange: (e) => { state.statsExercise = e.target.value; render(); } },
-    names.map((n) => E("option", { value: n, selected: n === state.statsExercise }, n)));
+  if (sessions.length) {
+    const names = db.exerciseNames(sessions);
+    if (state.statsExercise == null || !names.includes(state.statsExercise)) state.statsExercise = names[0] || null;
+    const selector = E("select", { class: "select", onchange: (e) => { state.statsExercise = e.target.value; render(); } },
+      names.map((n) => E("option", { value: n, selected: n === state.statsExercise }, n)));
+    const ex = state.statsExercise;
 
-  const ex = state.statsExercise;
-  return E("section", { class: "screen" }, [
-    navBar("Estatísticas"),
-    E("div", { class: "scroll" }, [
+    children.push(
       heatmapCard(db.activityCalendar(sessions)),
       chartCard("Volume semanal por tipo", volumeChart(db.weeklyVolume(sessions))),
       ex ? E("div", { class: "stats-ex" }, [
@@ -1148,7 +1151,29 @@ function statsRoot() {
         chartCard(`1RM estimado — ${ex}`, lineChart(db.oneRMProgress(ex, sessions))),
         chartCard(`Carga máxima — ${ex}`, barChart(db.loadProgress(ex, sessions))),
       ]) : null,
-    ]),
+    );
+  }
+
+  if (hasNutrition) {
+    const target = db.dailyTarget();
+    const avg = db.avgDeficit(7);
+    const streak = db.deficitStreak();
+    children.push(
+      E("div", { class: "section-header", style: "padding-top: 22px" }, "Nutrição"),
+      target != null || avg != null ? E("div", { class: "card metrics" }, [
+        target != null ? metricRow("Meta atual", fmt.kcal(target)) : null,
+        avg != null ? metricRow("Média (7 dias)", avg >= 0
+          ? `${fmt.kcal(avg)} abaixo da meta`
+          : `${fmt.kcal(-avg)} acima da meta`) : null,
+        target != null ? metricRow("Sequência na meta", streak === 1 ? "1 dia" : `${streak} dias`) : null,
+      ]) : null,
+      chartCard("Calorias por dia (4 semanas)", balanceChart(balance)),
+    );
+  }
+
+  return E("section", { class: "screen" }, [
+    navBar("Estatísticas"),
+    E("div", { class: "scroll" }, children),
   ]);
 }
 

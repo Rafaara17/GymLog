@@ -39,48 +39,64 @@ const ICONS = {
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><polyline points="8 11 12 15 16 11"/><path d="M5 21h14"/></svg>',
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.2-6.9"/><polyline points="21 3.5 21 7.5 17 7.5"/><polyline points="12 8 12 12 14.8 13.2"/></svg>',
   play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10-6.5z"/></svg>',
+  food: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3v5.5a2.5 2.5 0 0 0 5 0V3"/><line x1="8" y1="11" x2="8" y2="21"/><path d="M18.5 3c-2 1.8-3 4.4-3 7.5V13h3v8"/></svg>',
+  user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c1.2-3.5 4-5.5 7.5-5.5s6.3 2 7.5 5.5"/></svg>',
+  heart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5C7.2 16.2 3.5 13 3.5 9.1 3.5 6.6 5.4 4.5 7.9 4.5c1.6 0 3.1.9 4.1 2.4 1-1.5 2.5-2.4 4.1-2.4 2.5 0 4.4 2.1 4.4 4.6 0 3.9-3.7 7.1-8.5 11.4z"/></svg>',
+  flame: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5c.4 3-.9 4.6-2.2 6.2C8.4 10.4 7 12.1 7 14.4a5 5 0 0 0 10 0c0-1.1-.3-2.1-.9-3-.7.9-1.5 1.4-2.4 1.5.9-2.7.3-6.3-1.7-10.4z"/></svg>',
+  forward: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 5 16 12 9 19"/></svg>',
 };
 
 function icon(name, cls = "icon") {
   return E("span", { class: cls, html: ICONS[name] || "" });
 }
 
-// Peso como texto enxuto para campos de digitação ("36", "2.5").
-const weightStr = (v) => (Math.round(v) === v ? String(v) : String(Math.round(v * 10) / 10));
 // Rótulo curto do lado (unilateral).
 const sideLabel = (s) => (s === "E" ? "Esq." : s === "D" ? "Dir." : "");
 
-// Campo de peso editável: dá pra digitar (ex.: 36) e ainda usar −2.5 / +2.5.
-// Retorna { el, get } — `get()` devolve o valor atual em kg.
-function makeWeightField(initial, onChange) {
-  let value = Math.max(0, initial || 0);
+// Campo numérico editável com botões −passo/+passo (dá pra digitar também).
+// Retorna { el, get } — `get()` devolve o valor atual.
+function makeStepperField(initial, { step = 1, min = 0, decimals = 1 } = {}, onChange = () => {}) {
+  const show = (v) => {
+    const f = Math.pow(10, decimals);
+    return String(Math.round(v * f) / f);
+  };
+  let value = Math.max(min, initial || 0);
   const input = E("input", {
-    class: "weight-input", type: "number", inputmode: "decimal", step: "0.5", min: "0",
+    class: "weight-input", type: "number",
+    inputmode: decimals > 0 ? "decimal" : "numeric",
+    step: String(step), min: String(min),
   });
-  input.value = weightStr(value);
-  const sync = () => { input.value = weightStr(value); };
-  const commit = (v) => { value = Math.max(0, Math.round(v * 100) / 100); onChange(value); };
+  input.value = show(value);
+  const sync = () => { input.value = show(value); };
+  const commit = (v) => { value = Math.max(min, Math.round(v * 100) / 100); onChange(value); };
   input.addEventListener("input", () => {
     const v = parseFloat(input.value);
-    value = isNaN(v) || v < 0 ? 0 : v;
+    value = isNaN(v) || v < min ? min : v;
     onChange(value);
   });
   input.addEventListener("blur", sync);
   const el = E("div", { class: "stepper" }, [
-    E("button", { class: "step-btn", onclick: () => { commit(value - 2.5); sync(); } }, "-2.5"),
+    E("button", { class: "step-btn", onclick: () => { commit(value - step); sync(); } }, `-${show(step)}`),
     input,
-    E("button", { class: "step-btn", onclick: () => { commit(value + 2.5); sync(); } }, "+2.5"),
+    E("button", { class: "step-btn", onclick: () => { commit(value + step); sync(); } }, `+${show(step)}`),
   ]);
   return { el, get: () => value };
 }
 
+// Campo de peso da série: passos de 2.5 kg.
+function makeWeightField(initial, onChange) {
+  return makeStepperField(initial, { step: 2.5 }, onChange);
+}
+
 // ── Estado + navegação ──────────────────────────────────────────────────────
 const state = {
-  tab: "treino",          // treino | historico | stats
+  tab: "treino",          // treino | dieta | historico | stats
   stack: [],              // telas empilhadas: {name, ...}
   startType: "Push",      // tipo selecionado na tela inicial
   statsExercise: null,    // exercício selecionado em Stats
   setInput: null,         // estado transitório da entrada de séries
+  dietDate: null,         // dia exibido na aba Dieta (ms, início do dia); null = hoje
+  cardioInput: null,      // estado transitório do registro de cardio
 };
 
 function render() {
@@ -103,6 +119,7 @@ function switchTab(tab) { if (state.tab === tab && !state.stack.length) return; 
 function tabBar() {
   const tabs = [
     ["treino", "dumbbell", "Treino"],
+    ["dieta", "food", "Dieta"],
     ["historico", "calendar", "Histórico"],
     ["stats", "chart", "Stats"],
   ];
@@ -128,6 +145,7 @@ function navBar(title, { back, trailing, inline } = {}) {
 // ── Telas raiz por aba ───────────────────────────────────────────────────────
 function tabRoot() {
   if (state.tab === "treino") return workoutRoot();
+  if (state.tab === "dieta") return dietRoot();
   if (state.tab === "historico") return historyRoot();
   return statsRoot();
 }
@@ -443,6 +461,138 @@ function openPicker(onSelect, defaultCategory) {
   requestAnimationFrame(() => input.focus());
 }
 
+// ════════════ DIETA ════════════
+// Dia exibido na aba Dieta (início do dia em ms).
+function dietDay() {
+  return state.dietDate != null ? state.dietDate : fmt.startOfDay(Date.now());
+}
+
+function dietRoot() {
+  const trailing = [
+    E("button", { class: "nav-btn icon-btn", title: "Perfil", onclick: () => push({ name: "profile" }) }, [icon("user", "icon")]),
+  ];
+  const target = db.dailyTarget();
+
+  if (target == null) {
+    return E("section", { class: "screen" }, [
+      navBar("Dieta", { trailing }),
+      E("div", { class: "empty-state" }, [
+        icon("food", "empty-icon"),
+        E("h2", {}, "Configure sua meta"),
+        E("p", { class: "muted" }, "Preencha seu perfil para calcular sua meta diária de calorias."),
+        E("button", { class: "btn-primary", onclick: () => push({ name: "profile" }) }, "Configurar perfil"),
+      ]),
+    ]);
+  }
+
+  return E("section", { class: "screen" }, [
+    navBar("Dieta", { trailing }),
+    E("div", { class: "scroll" }, [
+      E("div", { class: "section-header" }, "Meta"),
+      E("div", { class: "card metrics" }, [metricRow("Meta diária", fmt.kcal(target))]),
+    ]),
+  ]);
+}
+
+// ════════════ PERFIL ════════════
+function profileScreen() {
+  // Valores padrão apenas para exibição; só viram dados ao editar.
+  const p = {
+    weightKg: 70, heightCm: 170, age: 25, sex: "M", activityLevel: "leve",
+    goal: "perder", targetMode: "auto", manualTargetKcal: null, countCardioInBalance: true,
+    ...(db.profile() || {}),
+  };
+
+  // Card de resultados atualizado localmente (sem re-render, para não perder o foco).
+  const resultsCard = E("div", { class: "card metrics" });
+  function refreshResults() {
+    const prof = db.profile();
+    const b = db.bmr(prof), t = db.tdee(prof), target = db.dailyTarget(prof);
+    resultsCard.innerHTML = "";
+    resultsCard.append(
+      metricRow("TMB (basal)", b != null ? fmt.kcal(b) : "—"),
+      metricRow("Gasto diário (TDEE)", t != null ? fmt.kcal(t) : "—"),
+      metricRow("Meta diária", target != null ? fmt.kcal(target) : "—"),
+    );
+  }
+
+  // Campos digitáveis salvam sem re-render; controles de toque re-renderizam.
+  const set = (patch) => { Object.assign(p, patch); db.saveProfile(patch); refreshResults(); };
+  const setAndRender = (patch) => { db.saveProfile(patch); render(); };
+
+  const weightField = makeStepperField(p.weightKg, { step: 0.5 }, (v) => set({ weightKg: v }));
+  const numInput = (value, placeholder, onValue) => {
+    const input = E("input", {
+      class: "form-input", type: "number", inputmode: "numeric", min: "0", placeholder,
+      value: value ? String(value) : "",
+    });
+    input.addEventListener("input", () => { onValue(parseInt(input.value, 10) || null); });
+    return input;
+  };
+  const heightInput = numInput(db.profile()?.heightCm, "170", (v) => set({ heightCm: v }));
+  const ageInput = numInput(db.profile()?.age, "25", (v) => set({ age: v }));
+
+  const formRow = (label, control) =>
+    E("div", { class: "form-row" }, [E("span", { class: "form-label" }, label), control]);
+
+  const sexSeg = segmented(["Masculino", "Feminino"], p.sex === "F" ? "Feminino" : "Masculino",
+    (opt) => setAndRender({ sex: opt === "Feminino" ? "F" : "M" }));
+
+  const activitySelect = E("select", {
+    class: "select",
+    onchange: (e) => setAndRender({ activityLevel: e.target.value }),
+  }, db.ACTIVITY_LEVELS.map(([id, label]) =>
+    E("option", { value: id, selected: id === p.activityLevel }, label)));
+
+  const goalSeg = segmented(db.GOALS.map(([, label]) => label),
+    (db.GOALS.find(([id]) => id === p.goal) || db.GOALS[0])[1],
+    (label) => setAndRender({ goal: db.GOALS.find(([, l]) => l === label)[0] }));
+
+  const modeSeg = segmented(["Automática", "Manual"], p.targetMode === "manual" ? "Manual" : "Automática",
+    (opt) => setAndRender({ targetMode: opt === "Manual" ? "manual" : "auto" }));
+
+  const manualInput = numInput(p.manualTargetKcal, "2000", (v) => set({ manualTargetKcal: v }));
+
+  const cardioToggle = E("button", {
+    class: "switch" + (p.countCardioInBalance ? " on" : ""),
+    onclick: () => setAndRender({ countCardioInBalance: !p.countCardioInBalance }),
+  }, [E("span", { class: "knob" })]);
+
+  refreshResults();
+
+  return E("section", { class: "screen" }, [
+    navBar("Perfil", { back: pop, inline: true }),
+    E("div", { class: "scroll" }, [
+      E("div", { class: "section-header" }, "Sobre você"),
+      E("div", { class: "card list" }, [
+        formRow("Peso (kg)", weightField.el),
+        formRow("Altura (cm)", heightInput),
+        formRow("Idade", ageInput),
+      ]),
+      E("div", { class: "section-header" }, "Sexo"),
+      E("div", { class: "seg-wrap" }, [sexSeg]),
+      E("div", { class: "section-header" }, "Nível de atividade"),
+      E("div", { class: "select-wrap flush" }, [activitySelect]),
+      E("div", { class: "section-header" }, "Objetivo"),
+      E("div", { class: "seg-wrap" }, [goalSeg]),
+      E("div", { class: "section-header" }, "Meta de calorias"),
+      E("div", { class: "seg-wrap" }, [modeSeg]),
+      p.targetMode === "manual"
+        ? E("div", { class: "card list" }, [formRow("Meta diária (kcal)", manualInput)])
+        : null,
+      E("div", { class: "card list", style: "margin-top: 10px" }, [
+        formRow("Somar cardio à meta do dia", cardioToggle),
+      ]),
+      p.countCardioInBalance
+        ? E("p", { class: "hint" }, "Com o cardio somando à meta, prefira um nível de atividade Sedentário ou Leve para não contar o exercício duas vezes.")
+        : null,
+      E("div", { class: "section-header" }, "Resultado"),
+      resultsCard,
+      E("p", { class: "hint" }, "TMB pela fórmula de Mifflin-St Jeor. As alterações são salvas automaticamente."),
+    ]),
+  ]);
+}
+
 // ════════════ HISTÓRICO ════════════
 function historyRoot() {
   const sessions = db.endedSessions();
@@ -588,6 +738,7 @@ function heatmapCard(weeks) {
 function screenFor(s) {
   if (s.name === "setInput") return setInputScreen(s.exerciseId);
   if (s.name === "sessionDetail") return sessionDetailScreen(s.sessionId);
+  if (s.name === "profile") return profileScreen();
   return E("div");
 }
 

@@ -6,12 +6,34 @@
 // Persistência local em localStorage.
 //
 
-import { epley, isoString, startOfDay, startOfWeek, monthKey, monthYear } from "./format.js";
+import { epley, mifflinStJeor, isoString, startOfDay, startOfWeek, monthKey, monthYear } from "./format.js";
 
 const STORAGE_KEY = "gymlog.db.v1";
 
 // Tipos de treino.
 export const TRAINING_TYPES = ["Push", "Pull", "Upper", "Lower"];
+
+// Refeições do dia.
+export const MEAL_TYPES = [
+  ["cafe", "Café da manhã"], ["almoco", "Almoço"],
+  ["jantar", "Jantar"], ["lanche", "Lanche"],
+];
+
+// Níveis de atividade (fator multiplicador da TMB → TDEE).
+export const ACTIVITY_LEVELS = [
+  ["sedentario", "Sedentário", 1.2],
+  ["leve", "Levemente ativo", 1.375],
+  ["moderado", "Moderadamente ativo", 1.55],
+  ["intenso", "Muito ativo", 1.725],
+  ["atleta", "Extremamente ativo", 1.9],
+];
+
+// Objetivos (ajuste em kcal sobre o TDEE).
+export const GOALS = [
+  ["perder", "Perder peso", -500],
+  ["manter", "Manter", 0],
+  ["ganhar", "Ganhar massa", 300],
+];
 
 // Catálogo semente, inserido na primeira execução.
 const CATALOG_SEED = [
@@ -32,7 +54,7 @@ function uid() {
 }
 
 // ── Estado em memória + persistência ───────────────────────────────────
-let db = { catalog: [], sessions: [] };
+let db = { catalog: [], sessions: [], foods: [], meals: [], cardio: [], profile: null };
 
 export function load() {
   try {
@@ -40,10 +62,14 @@ export function load() {
     if (raw) db = JSON.parse(raw);
   } catch (e) {
     console.warn("Falha ao ler dados, recomeçando:", e);
-    db = { catalog: [], sessions: [] };
+    db = { catalog: [], sessions: [], foods: [], meals: [], cardio: [], profile: null };
   }
   if (!Array.isArray(db.catalog)) db.catalog = [];
   if (!Array.isArray(db.sessions)) db.sessions = [];
+  if (!Array.isArray(db.foods)) db.foods = [];
+  if (!Array.isArray(db.meals)) db.meals = [];
+  if (!Array.isArray(db.cardio)) db.cardio = [];
+  if (db.profile != null && typeof db.profile !== "object") db.profile = null;
   seedCatalogIfNeeded();
   return db;
 }
@@ -215,6 +241,49 @@ export function lastWorkout(exerciseName) {
     return { date: session.date, groups, totalSets: sets.length, suggestedWeight };
   }
   return null;
+}
+
+// ── Perfil e meta calórica ────────────────────────────────────────────────
+const DEFAULT_PROFILE = {
+  weightKg: null, heightCm: null, age: null, sex: "M",
+  activityLevel: "leve", goal: "perder",
+  targetMode: "auto", manualTargetKcal: null,
+  countCardioInBalance: true,
+};
+
+export function profile() {
+  return db.profile;
+}
+
+export function saveProfile(patch) {
+  db.profile = { ...DEFAULT_PROFILE, ...(db.profile || {}), ...patch, updatedAt: Date.now() };
+  save();
+  return db.profile;
+}
+
+// TMB (Mifflin-St Jeor). null se o perfil estiver incompleto.
+export function bmr(p = db.profile) {
+  if (!p || !p.weightKg || !p.heightCm || !p.age) return null;
+  return mifflinStJeor(p.weightKg, p.heightCm, p.age, p.sex);
+}
+
+// Gasto diário total = TMB × fator do nível de atividade.
+export function tdee(p = db.profile) {
+  const base = bmr(p);
+  if (base == null) return null;
+  const level = ACTIVITY_LEVELS.find(([id]) => id === p.activityLevel);
+  return base * (level ? level[2] : 1.2);
+}
+
+// Meta diária de kcal: manual (se escolhida) ou TDEE + ajuste do objetivo,
+// arredondada para a dezena.
+export function dailyTarget(p = db.profile) {
+  if (!p) return null;
+  if (p.targetMode === "manual") return p.manualTargetKcal || null;
+  const total = tdee(p);
+  if (total == null) return null;
+  const goal = GOALS.find(([id]) => id === p.goal);
+  return Math.round((total + (goal ? goal[2] : 0)) / 10) * 10;
 }
 
 // ── Histórico (agrupamento por mês) ───────────────────────────────────────

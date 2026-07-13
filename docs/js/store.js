@@ -379,9 +379,12 @@ export function recentFoods(limit = 8) {
 }
 
 // Busca mesclada sem acentos: recentes → personalizados → TACO.
+// A consulta é quebrada em termos e todos precisam aparecer no nome
+// (ex.: "arroz integral" encontra "Arroz, integral, cozido").
 export function searchFoods(query, limit = 60) {
-  const q = normalize(query.trim());
-  if (!q) return [];
+  const tokens = normalize(query.trim()).split(/\s+/).filter(Boolean);
+  if (!tokens.length) return [];
+  const matches = (name) => tokens.every((t) => name.includes(t));
   const seen = new Set();
   const results = [];
   const push = (ref) => {
@@ -392,17 +395,17 @@ export function searchFoods(query, limit = 60) {
     results.push(ref);
   };
   for (const ref of recentFoods(12)) {
-    if (normalize(ref.name).includes(q)) push(ref);
+    if (matches(normalize(ref.name))) push(ref);
   }
   for (const f of customFoods()) {
-    if (normalize(f.name).includes(q)) push(customFoodRef(f));
+    if (matches(normalize(f.name))) push(customFoodRef(f));
   }
-  // No TACO, quem começa pelo termo vem antes de quem só o contém.
+  // No TACO, quem começa pelo primeiro termo vem antes de quem só o contém.
   const names = tacoNormalized();
   const starts = [], contains = [];
   for (let i = 0; i < names.length; i++) {
-    if (names[i].startsWith(q)) starts.push(i);
-    else if (names[i].includes(q)) contains.push(i);
+    if (!matches(names[i])) continue;
+    (names[i].startsWith(tokens[0]) ? starts : contains).push(i);
   }
   for (const i of starts.concat(contains)) {
     if (results.length >= limit) break;

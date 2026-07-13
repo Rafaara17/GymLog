@@ -7,7 +7,8 @@
 
 import * as db from "./store.js";
 import * as fmt from "./format.js";
-import { volumeChart, lineChart, barChart, heatmapChart, TYPE_COLORS } from "./charts.js";
+import { volumeChart, lineChart, barChart, heatmapChart, balanceChart, TYPE_COLORS } from "./charts.js";
+import { CARDIO_ACTIVITIES, INTENSITIES } from "./data/mets.js";
 
 // ── Mini-helper de DOM (hyperscript) ───────────────────────────────────────
 function E(tag, attrs = {}, children = []) {
@@ -39,48 +40,64 @@ const ICONS = {
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><polyline points="8 11 12 15 16 11"/><path d="M5 21h14"/></svg>',
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.2-6.9"/><polyline points="21 3.5 21 7.5 17 7.5"/><polyline points="12 8 12 12 14.8 13.2"/></svg>',
   play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10-6.5z"/></svg>',
+  food: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3v5.5a2.5 2.5 0 0 0 5 0V3"/><line x1="8" y1="11" x2="8" y2="21"/><path d="M18.5 3c-2 1.8-3 4.4-3 7.5V13h3v8"/></svg>',
+  user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c1.2-3.5 4-5.5 7.5-5.5s6.3 2 7.5 5.5"/></svg>',
+  heart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5C7.2 16.2 3.5 13 3.5 9.1 3.5 6.6 5.4 4.5 7.9 4.5c1.6 0 3.1.9 4.1 2.4 1-1.5 2.5-2.4 4.1-2.4 2.5 0 4.4 2.1 4.4 4.6 0 3.9-3.7 7.1-8.5 11.4z"/></svg>',
+  flame: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5c.4 3-.9 4.6-2.2 6.2C8.4 10.4 7 12.1 7 14.4a5 5 0 0 0 10 0c0-1.1-.3-2.1-.9-3-.7.9-1.5 1.4-2.4 1.5.9-2.7.3-6.3-1.7-10.4z"/></svg>',
+  forward: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 5 16 12 9 19"/></svg>',
 };
 
 function icon(name, cls = "icon") {
   return E("span", { class: cls, html: ICONS[name] || "" });
 }
 
-// Peso como texto enxuto para campos de digitação ("36", "2.5").
-const weightStr = (v) => (Math.round(v) === v ? String(v) : String(Math.round(v * 10) / 10));
 // Rótulo curto do lado (unilateral).
 const sideLabel = (s) => (s === "E" ? "Esq." : s === "D" ? "Dir." : "");
 
-// Campo de peso editável: dá pra digitar (ex.: 36) e ainda usar −2.5 / +2.5.
-// Retorna { el, get } — `get()` devolve o valor atual em kg.
-function makeWeightField(initial, onChange) {
-  let value = Math.max(0, initial || 0);
+// Campo numérico editável com botões −passo/+passo (dá pra digitar também).
+// Retorna { el, get } — `get()` devolve o valor atual.
+function makeStepperField(initial, { step = 1, min = 0, decimals = 1 } = {}, onChange = () => {}) {
+  const show = (v) => {
+    const f = Math.pow(10, decimals);
+    return String(Math.round(v * f) / f);
+  };
+  let value = Math.max(min, initial || 0);
   const input = E("input", {
-    class: "weight-input", type: "number", inputmode: "decimal", step: "0.5", min: "0",
+    class: "weight-input", type: "number",
+    inputmode: decimals > 0 ? "decimal" : "numeric",
+    step: String(step), min: String(min),
   });
-  input.value = weightStr(value);
-  const sync = () => { input.value = weightStr(value); };
-  const commit = (v) => { value = Math.max(0, Math.round(v * 100) / 100); onChange(value); };
+  input.value = show(value);
+  const sync = () => { input.value = show(value); };
+  const commit = (v) => { value = Math.max(min, Math.round(v * 100) / 100); onChange(value); };
   input.addEventListener("input", () => {
     const v = parseFloat(input.value);
-    value = isNaN(v) || v < 0 ? 0 : v;
+    value = isNaN(v) || v < min ? min : v;
     onChange(value);
   });
   input.addEventListener("blur", sync);
   const el = E("div", { class: "stepper" }, [
-    E("button", { class: "step-btn", onclick: () => { commit(value - 2.5); sync(); } }, "-2.5"),
+    E("button", { class: "step-btn", onclick: () => { commit(value - step); sync(); } }, `-${show(step)}`),
     input,
-    E("button", { class: "step-btn", onclick: () => { commit(value + 2.5); sync(); } }, "+2.5"),
+    E("button", { class: "step-btn", onclick: () => { commit(value + step); sync(); } }, `+${show(step)}`),
   ]);
-  return { el, get: () => value };
+  return { el, get: () => value, set: (v) => { commit(v); sync(); } };
+}
+
+// Campo de peso da série: passos de 2.5 kg.
+function makeWeightField(initial, onChange) {
+  return makeStepperField(initial, { step: 2.5 }, onChange);
 }
 
 // ── Estado + navegação ──────────────────────────────────────────────────────
 const state = {
-  tab: "treino",          // treino | historico | stats
+  tab: "treino",          // treino | dieta | historico | stats
   stack: [],              // telas empilhadas: {name, ...}
   startType: "Push",      // tipo selecionado na tela inicial
   statsExercise: null,    // exercício selecionado em Stats
   setInput: null,         // estado transitório da entrada de séries
+  dietDate: null,         // dia exibido na aba Dieta (ms, início do dia); null = hoje
+  cardioInput: null,      // estado transitório do registro de cardio
 };
 
 function render() {
@@ -103,6 +120,7 @@ function switchTab(tab) { if (state.tab === tab && !state.stack.length) return; 
 function tabBar() {
   const tabs = [
     ["treino", "dumbbell", "Treino"],
+    ["dieta", "food", "Dieta"],
     ["historico", "calendar", "Histórico"],
     ["stats", "chart", "Stats"],
   ];
@@ -128,6 +146,7 @@ function navBar(title, { back, trailing, inline } = {}) {
 // ── Telas raiz por aba ───────────────────────────────────────────────────────
 function tabRoot() {
   if (state.tab === "treino") return workoutRoot();
+  if (state.tab === "dieta") return dietRoot();
   if (state.tab === "historico") return historyRoot();
   return statsRoot();
 }
@@ -149,9 +168,116 @@ function startWorkout() {
       E("button", {
         class: "btn-primary big", onclick: () => { db.startSession(state.startType); render(); },
       }, [icon("play", "icon sm"), E("span", {}, "Iniciar")]),
+      E("button", {
+        class: "btn-secondary", onclick: () => push({ name: "cardioLog" }),
+      }, [icon("heart", "icon sm"), E("span", {}, "Registrar cardio")]),
     ]),
   ]);
   return screen;
+}
+
+// ════════════ CARDIO ════════════
+function cardioLogScreen() {
+  let activity = CARDIO_ACTIVITIES[0];
+  let intensity = "moderado";
+  const hasWeight = !!db.profile()?.weightKg;
+  const weight = db.profile()?.weightKg || 70;
+
+  const preview = E("div", { class: "amount-preview" });
+  const durField = makeStepperField(30, { step: 5, decimals: 0 }, () => updatePreview());
+  function updatePreview() {
+    const met = activity.mets[intensity];
+    const k = Math.round((met * 3.5 * weight) / 200 * durField.get());
+    preview.textContent = `≈ ${fmt.kcal(k)} · MET ${met.toLocaleString("pt-BR")} × ${weight} kg × ${durField.get()} min`;
+  }
+
+  const distInput = E("input", { class: "form-input", type: "number", inputmode: "decimal", min: "0", placeholder: "5" });
+  const distWrap = E("div", { class: "card list", style: activity.hasDistance ? "" : "display:none" }, [
+    E("div", { class: "form-row" }, [E("span", { class: "form-label" }, "Distância (km) — opcional"), distInput]),
+  ]);
+
+  const grid = E("div", { class: "activity-grid" }, CARDIO_ACTIVITIES.map((a) =>
+    E("button", {
+      class: "activity-chip" + (a.id === activity.id ? " active" : ""),
+      onclick: (e) => {
+        activity = a;
+        grid.querySelectorAll(".activity-chip").forEach((b) => b.classList.remove("active"));
+        e.currentTarget.classList.add("active");
+        distWrap.style.display = a.hasDistance ? "" : "none";
+        updatePreview();
+      },
+    }, a.name)));
+
+  const intSeg = E("div", { class: "segmented" }, INTENSITIES.map(([id, label]) =>
+    E("button", {
+      class: "seg" + (id === intensity ? " active" : ""),
+      onclick: (e) => {
+        intensity = id;
+        intSeg.querySelectorAll(".seg").forEach((b) => b.classList.remove("active"));
+        e.currentTarget.classList.add("active");
+        updatePreview();
+      },
+    }, label)));
+
+  updatePreview();
+
+  return E("section", { class: "screen" }, [
+    navBar("Cardio", { back: pop, inline: true }),
+    E("div", { class: "scroll" }, [
+      E("div", { class: "section-header" }, "Atividade"),
+      grid,
+      E("div", { class: "section-header" }, "Intensidade"),
+      E("div", { class: "seg-wrap" }, [intSeg]),
+      E("div", { class: "section-header" }, "Duração (min)"),
+      E("div", { class: "cardio-dur" }, [durField.el]),
+      E("div", { class: "section-header" }, "Distância"),
+      distWrap,
+      E("div", { class: "cardio-save" }, [
+        preview,
+        hasWeight ? null : E("p", { class: "hint" }, "Usando 70 kg na estimativa — defina seu peso no Perfil (aba Dieta)."),
+        E("button", {
+          class: "btn-primary green",
+          onclick: () => {
+            const min = durField.get();
+            if (min <= 0) return;
+            db.logCardio({
+              activityId: activity.id, intensity, durationMin: min,
+              distanceKm: parseFloat(distInput.value) || null,
+            });
+            toast(`${activity.name} registrado.`);
+            pop();
+          },
+        }, [icon("check", "icon sm"), E("span", {}, "Salvar cardio")]),
+      ]),
+    ]),
+  ]);
+}
+
+function cardioDetailScreen(cardioId) {
+  const c = db.cardioById(cardioId);
+  if (!c) { pop(); return E("div"); }
+  const intensityLabel = (INTENSITIES.find(([id]) => id === c.intensity) || [])[1] || c.intensity;
+
+  return E("section", { class: "screen" }, [
+    navBar(c.activity, { back: pop, inline: true }),
+    E("div", { class: "scroll" }, [
+      E("div", { class: "section-header" }, "Resumo"),
+      E("div", { class: "card metrics" }, [
+        metricRow("Data", fmt.dateTime(c.date)),
+        metricRow("Intensidade", intensityLabel),
+        metricRow("Duração", fmt.duration(c.durationMin * 60)),
+        c.distanceKm ? metricRow("Distância", `${c.distanceKm.toLocaleString("pt-BR")} km`) : null,
+        metricRow("Calorias", fmt.kcal(c.kcal)),
+        metricRow("Cálculo", `MET ${c.met.toLocaleString("pt-BR")} × ${c.weightKgUsed} kg`),
+      ]),
+      E("div", { class: "card list", style: "margin-top: 18px" }, [
+        E("button", {
+          class: "row tappable",
+          onclick: () => confirmDelete("Apagar cardio?", () => { db.deleteCardio(c.id); pop(); }),
+        }, [E("span", { class: "row-title", style: "color: var(--danger)" }, "Apagar registro")]),
+      ]),
+    ]),
+  ]);
 }
 
 function activeWorkout(session) {
@@ -443,43 +569,513 @@ function openPicker(onSelect, defaultCategory) {
   requestAnimationFrame(() => input.focus());
 }
 
-// ════════════ HISTÓRICO ════════════
-function historyRoot() {
-  const sessions = db.endedSessions();
+// ════════════ DIETA ════════════
+// Dia exibido na aba Dieta (início do dia em ms).
+function dietDay() {
+  return state.dietDate != null ? state.dietDate : fmt.startOfDay(Date.now());
+}
+
+const DAY_MS = 86_400_000;
+
+// Refeição sugerida pelo horário.
+function suggestMealType(ms = Date.now()) {
+  const d = new Date(ms);
+  const h = d.getHours() + d.getMinutes() / 60;
+  if (h < 10.5) return "cafe";
+  if (h < 14.5) return "almoco";
+  if (h < 18.5) return "lanche";
+  return "jantar";
+}
+
+// Registro em outro dia entra ao meio-dia (ordem estável); hoje entra agora.
+function mealDate(dayMs) {
+  return dayMs === fmt.startOfDay(Date.now()) ? Date.now() : dayMs + DAY_MS / 2;
+}
+
+function dietRoot() {
+  const day = dietDay();
+  const bal = db.dailyBalance(day);
+  const groups = db.mealsForDay(day);
   const trailing = [
-    E("button", { class: "nav-btn icon-btn", title: "Importar CSV", onclick: importCSVFlow }, [icon("download", "icon")]),
-    E("button", { class: "nav-btn icon-btn", title: "Exportar CSV", disabled: !sessions.length, onclick: shareCSV }, [icon("share", "icon")]),
+    E("button", { class: "nav-btn icon-btn", title: "Perfil", onclick: () => push({ name: "profile" }) }, [icon("user", "icon")]),
   ];
 
-  if (!sessions.length) {
-    return E("section", { class: "screen" }, [
-      navBar("Histórico", { trailing }),
-      emptyState("calendar", "Nenhum treino registrado", "Os treinos encerrados aparecem aqui."),
+  const sections = db.MEAL_TYPES.map(([id, label]) => {
+    const entries = groups[id] || [];
+    const subtotal = entries.reduce((s, e) => s + db.entryMacros(e).kcal, 0);
+    const rows = entries.map((entry) => {
+      const m = db.entryMacros(entry);
+      const row = E("button", { class: "row tappable", onclick: () => openMealEntryEditor(entry) }, [
+        E("div", { class: "row-main" }, [
+          E("div", { class: "row-title" }, entry.name),
+          E("div", { class: "row-sub" }, [
+            chip(fmt.grams(entry.grams)),
+            m.protein >= 1 ? chip(`P ${Math.round(m.protein)} g`) : null,
+          ]),
+        ]),
+        E("span", { class: "row-kcal" }, fmt.kcal(m.kcal)),
+      ]);
+      attachLongPress(row, () => confirmDelete("Apagar alimento?", () => { db.deleteMealEntry(entry.id); render(); }));
+      return row;
+    });
+
+    return E("div", {}, [
+      E("div", { class: "section-header sh-split" }, [
+        E("span", {}, label),
+        subtotal > 0 ? E("span", { class: "sh-value" }, fmt.kcal(subtotal)) : null,
+      ]),
+      E("div", { class: "card list" }, [
+        ...rows,
+        E("button", { class: "row tappable accent", onclick: () => openFoodPicker(id, day) },
+          [icon("plus", "icon"), E("span", { class: "row-title accent" }, "Adicionar alimento")]),
+      ]),
+    ]);
+  });
+
+  return E("section", { class: "screen" }, [
+    navBar("Dieta", { trailing }),
+    E("div", { class: "scroll" }, [
+      dayNav(),
+      dailySummaryCard(bal),
+      ...sections,
+      bal.logged ? E("p", { class: "hint" }, "Toque para editar · segure para apagar") : null,
+    ]),
+  ]);
+}
+
+// Navegador de dia: ‹ Hoje ›.
+function dayNav() {
+  const day = dietDay();
+  const today = fmt.startOfDay(Date.now());
+  const label = day === today ? "Hoje"
+    : day === fmt.startOfDay(today - DAY_MS / 2) ? "Ontem"
+    : fmt.shortDate(day);
+  const go = (d) => { state.dietDate = d >= today ? null : d; render(); };
+  return E("div", { class: "day-nav" }, [
+    E("button", { class: "day-btn", onclick: () => go(fmt.startOfDay(day - DAY_MS / 2)) }, [icon("back", "icon sm")]),
+    E("button", { class: "day-label", onclick: () => go(today) }, label),
+    E("button", { class: "day-btn", disabled: day >= today, onclick: () => go(fmt.startOfDay(day + DAY_MS * 1.5)) }, [icon("forward", "icon sm")]),
+  ]);
+}
+
+// Card-resumo do dia: saldo, barra de progresso, macros e cardio.
+function dailySummaryCard(bal) {
+  const macroRow = E("div", { class: "macro-row" }, [
+    ["Proteína", bal.macros.protein], ["Carboidrato", bal.macros.carbs], ["Gordura", bal.macros.fat],
+  ].map(([label, v]) => E("div", { class: "macro" }, [
+    E("span", { class: "macro-label" }, label),
+    E("span", { class: "macro-value" }, `${Math.round(v)} g`),
+  ])));
+
+  if (bal.target == null) {
+    return E("div", { class: "card diet-summary" }, [
+      E("div", { class: "kcal-remaining" }, fmt.kcal(bal.consumed)),
+      E("div", { class: "muted sm" }, "kcal consumidas neste dia"),
+      macroRow,
+      E("button", { class: "btn-primary", onclick: () => push({ name: "profile" }) }, "Configurar meta de calorias"),
     ]);
   }
 
-  const groups = db.groupByMonth(sessions);
+  const over = bal.remaining < 0;
+  const pct = Math.min(100, bal.allowance > 0 ? (bal.consumed / bal.allowance) * 100 : 0);
+  const cardioCounted = db.profile()?.countCardioInBalance;
+  return E("div", { class: "card diet-summary" }, [
+    E("div", { class: "kcal-remaining" + (over ? " over" : "") },
+      over ? `Excedeu ${fmt.kcal(-bal.remaining)}` : `Restam ${fmt.kcal(bal.remaining)}`),
+    E("div", { class: "kcal-bar" }, [
+      E("div", { class: "kcal-bar-fill" + (over ? " over" : ""), style: `width:${pct.toFixed(1)}%` }),
+    ]),
+    E("div", { class: "muted sm" }, `${fmt.kcal(bal.consumed)} de ${fmt.kcal(bal.allowance)}`),
+    macroRow,
+    bal.cardioKcal > 0 ? E("div", { class: "cardio-line" }, [
+      icon("flame", "icon sm"),
+      E("span", {}, cardioCounted
+        ? `Cardio: +${fmt.kcal(bal.cardioKcal)} na meta do dia`
+        : `Cardio: ${fmt.kcal(bal.cardioKcal)} gastas (fora da meta)`),
+    ]) : null,
+  ]);
+}
+
+// ════════════ SELETOR DE ALIMENTO (folha) ════════════
+function openFoodPicker(mealType, dayMs) {
+  let search = "";
+  const overlay = E("div", { class: "overlay sheet-overlay" });
+  const listEl = E("div", { class: "picker-list" });
+  const searchBar = E("div", { class: "search-bar" });
+  const navTitle = E("h1", { class: "nav-title" }, "Alimento");
+
+  const close = () => overlay.remove();
+
+  function foodRow(ref) {
+    return E("button", { class: "row tappable", onclick: () => showAmount(ref) }, [
+      E("div", { class: "row-main" }, [
+        E("div", { class: "row-title" }, ref.name),
+        E("div", { class: "row-sub" }, [
+          chip(`${Math.round(ref.per100.kcal)} kcal / 100 g`),
+          chip(`P ${ref.per100.protein} g`),
+          ref.source === "custom" ? chip("meu") : null,
+        ]),
+      ]),
+    ]);
+  }
+
+  function renderList() {
+    listEl.innerHTML = "";
+    const q = search.trim();
+    if (!q) {
+      const recents = db.recentFoods();
+      const customs = db.customFoods().map((f) => db.resolveFoodRef({ source: "custom", refId: f.id }));
+      if (recents.length) {
+        listEl.appendChild(E("div", { class: "section-header" }, "Recentes"));
+        listEl.appendChild(E("div", { class: "card list" }, recents.map(foodRow)));
+      }
+      if (customs.length) {
+        listEl.appendChild(E("div", { class: "section-header" }, "Meus alimentos"));
+        listEl.appendChild(E("div", { class: "card list" }, customs.map(foodRow)));
+      }
+      if (!recents.length && !customs.length) {
+        listEl.appendChild(E("p", { class: "empty-inline center" }, "Busque um alimento da tabela TACO ou crie o seu."));
+      }
+      return;
+    }
+    const results = db.searchFoods(q);
+    const exact = results.some((r) => r.name.toLowerCase() === q.toLowerCase());
+    if (!exact) {
+      listEl.appendChild(E("div", { class: "card list" }, [
+        E("button", { class: "row tappable accent", onclick: () => showCreate(q) },
+          [icon("plus", "icon"), E("span", { class: "row-title accent" }, `Criar “${q}”`)]),
+      ]));
+    }
+    if (results.length) {
+      listEl.appendChild(E("div", { class: "card list" }, results.map(foodRow)));
+    } else {
+      listEl.appendChild(E("p", { class: "empty-inline center" }, "Nada encontrado na TACO. Crie o alimento acima."));
+    }
+  }
+
+  // Passo de criação de alimento personalizado (valores por 100 g).
+  function showCreate(name) {
+    navTitle.textContent = "Novo alimento";
+    searchBar.style.display = "none";
+    listEl.innerHTML = "";
+    const field = (label, placeholder, inputmode = "decimal") => {
+      const input = E("input", { class: "form-input wide", type: inputmode === "text" ? "text" : "number", inputmode, min: "0", placeholder });
+      return { row: E("div", { class: "form-row" }, [E("span", { class: "form-label" }, label), input]), input };
+    };
+    const nameField = field("Nome", "Ex.: Pão de queijo da vó", "text");
+    nameField.input.value = name;
+    const kcalField = field("kcal / 100 g", "250", "numeric");
+    const protField = field("Proteína (g)", "8");
+    const carbField = field("Carboidrato (g)", "30");
+    const fatField = field("Gordura (g)", "10");
+    const unitNameField = field("Nome da porção (opcional)", "fatia, unidade…", "text");
+    const unitGramsField = field("Gramas por porção", "50", "numeric");
+
+    const createBtn = E("button", {
+      class: "btn-primary",
+      onclick: () => {
+        const food = db.createFood({
+          name: nameField.input.value,
+          per100: { kcal: kcalField.input.value, protein: protField.input.value, carbs: carbField.input.value, fat: fatField.input.value },
+          unitName: unitNameField.input.value,
+          unitGrams: unitGramsField.input.value,
+        });
+        if (!food) return;
+        showAmount(db.resolveFoodRef({ source: "custom", refId: food.id }));
+      },
+    }, "Criar e adicionar");
+
+    listEl.appendChild(E("div", { class: "create-food-form" }, [
+      E("div", { class: "card list" }, [nameField.row]),
+      E("div", { class: "section-header" }, "Por 100 g"),
+      E("div", { class: "card list" }, [kcalField.row, protField.row, carbField.row, fatField.row]),
+      E("div", { class: "section-header" }, "Porção (opcional)"),
+      E("div", { class: "card list" }, [unitNameField.row, unitGramsField.row]),
+      createBtn,
+      E("button", { class: "nav-btn create-cat-back", onclick: () => { navTitle.textContent = "Alimento"; searchBar.style.display = ""; renderList(); } }, "Voltar"),
+    ]));
+  }
+
+  // Passo de quantidade: gramas + refeição, com prévia de kcal/macros.
+  function showAmount(ref) {
+    navTitle.textContent = "Quantidade";
+    searchBar.style.display = "none";
+    listEl.innerHTML = "";
+
+    let chosenMeal = mealType || suggestMealType();
+    const preview = E("div", { class: "amount-preview" });
+    const gramsField = makeStepperField(ref.unitGrams || 100, { step: 10, decimals: 0 }, () => updatePreview());
+    function updatePreview() {
+      const f = gramsField.get() / 100;
+      preview.textContent = `≈ ${fmt.kcal(ref.per100.kcal * f)} · P ${Math.round(ref.per100.protein * f)} g · C ${Math.round(ref.per100.carbs * f)} g · G ${Math.round(ref.per100.fat * f)} g`;
+    }
+    updatePreview();
+
+    const unitChips = ref.unitGrams ? E("div", { class: "unit-chips" }, [1, 2, 3].map((n) =>
+      E("button", { class: "unit-chip", onclick: () => { gramsField.set(n * ref.unitGrams); updatePreview(); } },
+        `${n} ${ref.unitName || "porção"}${n > 1 ? "s" : ""} (${fmt.grams(n * ref.unitGrams)})`)
+    )) : null;
+
+    const mealSeg = E("div", { class: "segmented small" }, db.MEAL_TYPES.map(([id, label]) =>
+      E("button", {
+        class: "seg" + (id === chosenMeal ? " active" : ""),
+        onclick: (e) => {
+          chosenMeal = id;
+          mealSeg.querySelectorAll(".seg").forEach((b) => b.classList.remove("active"));
+          e.currentTarget.classList.add("active");
+        },
+      }, label.replace("Café da manhã", "Café"))
+    ));
+
+    listEl.appendChild(E("div", { class: "amount-form" }, [
+      E("div", { class: "amount-food" }, ref.name),
+      E("div", { class: "field-label" }, "Quantidade (g)"),
+      gramsField.el,
+      unitChips,
+      preview,
+      E("div", { class: "field-label" }, "Refeição"),
+      mealSeg,
+      E("button", {
+        class: "btn-primary green",
+        onclick: () => {
+          const grams = gramsField.get();
+          if (grams <= 0) return;
+          db.logMeal({ foodRef: ref, name: ref.name, per100: ref.per100, grams, mealType: chosenMeal, date: mealDate(dayMs) });
+          close();
+          render();
+          toast(`Adicionado: ${ref.name}`);
+        },
+      }, [icon("check", "icon sm"), E("span", {}, "Adicionar")]),
+    ]));
+  }
+
+  const input = E("input", { class: "search-input", type: "text", placeholder: "Buscar alimento (TACO)", autocomplete: "off" });
+  input.addEventListener("input", () => { search = input.value; renderList(); });
+  searchBar.appendChild(input);
+
+  overlay.appendChild(E("div", { class: "sheet picker-sheet", onclick: (e) => e.stopPropagation() }, [
+    E("header", { class: "navbar inline sheet-nav" }, [
+      E("div", { class: "nav-side nav-left" }, [E("button", { class: "nav-btn", onclick: close }, "Cancelar")]),
+      navTitle,
+      E("div", { class: "nav-side nav-right" }, []),
+    ]),
+    searchBar,
+    listEl,
+  ]));
+  overlay.addEventListener("click", close);
+  document.body.appendChild(overlay);
+  renderList();
+  requestAnimationFrame(() => input.focus());
+}
+
+// Folha compacta para editar gramas/refeição de uma entrada existente.
+function openMealEntryEditor(entry) {
+  const overlay = E("div", { class: "overlay sheet-overlay" });
+  const close = () => overlay.remove();
+
+  let chosenMeal = entry.mealType;
+  const preview = E("div", { class: "amount-preview" });
+  const gramsField = makeStepperField(entry.grams, { step: 10, decimals: 0 }, () => updatePreview());
+  function updatePreview() {
+    const f = gramsField.get() / 100;
+    preview.textContent = `≈ ${fmt.kcal(entry.per100.kcal * f)} · P ${Math.round(entry.per100.protein * f)} g · C ${Math.round(entry.per100.carbs * f)} g · G ${Math.round(entry.per100.fat * f)} g`;
+  }
+  updatePreview();
+
+  const mealSeg = E("div", { class: "segmented small" }, db.MEAL_TYPES.map(([id, label]) =>
+    E("button", {
+      class: "seg" + (id === chosenMeal ? " active" : ""),
+      onclick: (e) => {
+        chosenMeal = id;
+        mealSeg.querySelectorAll(".seg").forEach((b) => b.classList.remove("active"));
+        e.currentTarget.classList.add("active");
+      },
+    }, label.replace("Café da manhã", "Café"))
+  ));
+
+  overlay.appendChild(E("div", { class: "sheet compact", onclick: (e) => e.stopPropagation() }, [
+    E("header", { class: "navbar inline sheet-nav" }, [
+      E("div", { class: "nav-side nav-left" }, [E("button", { class: "nav-btn", onclick: close }, "Cancelar")]),
+      E("h1", { class: "nav-title" }, "Editar"),
+      E("div", { class: "nav-side nav-right" }, []),
+    ]),
+    E("div", { class: "amount-form" }, [
+      E("div", { class: "amount-food" }, entry.name),
+      E("div", { class: "field-label" }, "Quantidade (g)"),
+      gramsField.el,
+      preview,
+      E("div", { class: "field-label" }, "Refeição"),
+      mealSeg,
+      E("button", {
+        class: "btn-primary",
+        onclick: () => {
+          db.updateMealEntry(entry.id, { grams: gramsField.get(), mealType: chosenMeal });
+          close();
+          render();
+        },
+      }, "Salvar"),
+    ]),
+  ]));
+  overlay.addEventListener("click", close);
+  document.body.appendChild(overlay);
+}
+
+// ════════════ PERFIL ════════════
+function profileScreen() {
+  // Valores padrão apenas para exibição; só viram dados ao editar.
+  const p = {
+    weightKg: 70, heightCm: 170, age: 25, sex: "M", activityLevel: "leve",
+    goal: "perder", targetMode: "auto", manualTargetKcal: null, countCardioInBalance: true,
+    ...(db.profile() || {}),
+  };
+
+  // Card de resultados atualizado localmente (sem re-render, para não perder o foco).
+  const resultsCard = E("div", { class: "card metrics" });
+  function refreshResults() {
+    const prof = db.profile();
+    const b = db.bmr(prof), t = db.tdee(prof), target = db.dailyTarget(prof);
+    resultsCard.innerHTML = "";
+    resultsCard.append(
+      metricRow("TMB (basal)", b != null ? fmt.kcal(b) : "—"),
+      metricRow("Gasto diário (TDEE)", t != null ? fmt.kcal(t) : "—"),
+      metricRow("Meta diária", target != null ? fmt.kcal(target) : "—"),
+    );
+  }
+
+  // Campos digitáveis salvam sem re-render; controles de toque re-renderizam.
+  const set = (patch) => { Object.assign(p, patch); db.saveProfile(patch); refreshResults(); };
+  const setAndRender = (patch) => { db.saveProfile(patch); render(); };
+
+  const weightField = makeStepperField(p.weightKg, { step: 0.5 }, (v) => set({ weightKg: v }));
+  const numInput = (value, placeholder, onValue) => {
+    const input = E("input", {
+      class: "form-input", type: "number", inputmode: "numeric", min: "0", placeholder,
+      value: value ? String(value) : "",
+    });
+    input.addEventListener("input", () => { onValue(parseInt(input.value, 10) || null); });
+    return input;
+  };
+  const heightInput = numInput(db.profile()?.heightCm, "170", (v) => set({ heightCm: v }));
+  const ageInput = numInput(db.profile()?.age, "25", (v) => set({ age: v }));
+
+  const formRow = (label, control) =>
+    E("div", { class: "form-row" }, [E("span", { class: "form-label" }, label), control]);
+
+  const sexSeg = segmented(["Masculino", "Feminino"], p.sex === "F" ? "Feminino" : "Masculino",
+    (opt) => setAndRender({ sex: opt === "Feminino" ? "F" : "M" }));
+
+  const activitySelect = E("select", {
+    class: "select",
+    onchange: (e) => setAndRender({ activityLevel: e.target.value }),
+  }, db.ACTIVITY_LEVELS.map(([id, label]) =>
+    E("option", { value: id, selected: id === p.activityLevel }, label)));
+
+  const goalSeg = segmented(db.GOALS.map(([, label]) => label),
+    (db.GOALS.find(([id]) => id === p.goal) || db.GOALS[0])[1],
+    (label) => setAndRender({ goal: db.GOALS.find(([, l]) => l === label)[0] }));
+
+  const modeSeg = segmented(["Automática", "Manual"], p.targetMode === "manual" ? "Manual" : "Automática",
+    (opt) => setAndRender({ targetMode: opt === "Manual" ? "manual" : "auto" }));
+
+  const manualInput = numInput(p.manualTargetKcal, "2000", (v) => set({ manualTargetKcal: v }));
+
+  const cardioToggle = E("button", {
+    class: "switch" + (p.countCardioInBalance ? " on" : ""),
+    onclick: () => setAndRender({ countCardioInBalance: !p.countCardioInBalance }),
+  }, [E("span", { class: "knob" })]);
+
+  refreshResults();
+
+  return E("section", { class: "screen" }, [
+    navBar("Perfil", { back: pop, inline: true }),
+    E("div", { class: "scroll" }, [
+      E("div", { class: "section-header" }, "Sobre você"),
+      E("div", { class: "card list" }, [
+        formRow("Peso (kg)", weightField.el),
+        formRow("Altura (cm)", heightInput),
+        formRow("Idade", ageInput),
+      ]),
+      E("div", { class: "section-header" }, "Sexo"),
+      E("div", { class: "seg-wrap" }, [sexSeg]),
+      E("div", { class: "section-header" }, "Nível de atividade"),
+      E("div", { class: "select-wrap flush" }, [activitySelect]),
+      E("div", { class: "section-header" }, "Objetivo"),
+      E("div", { class: "seg-wrap" }, [goalSeg]),
+      E("div", { class: "section-header" }, "Meta de calorias"),
+      E("div", { class: "seg-wrap" }, [modeSeg]),
+      p.targetMode === "manual"
+        ? E("div", { class: "card list" }, [formRow("Meta diária (kcal)", manualInput)])
+        : null,
+      E("div", { class: "card list", style: "margin-top: 10px" }, [
+        formRow("Somar cardio à meta do dia", cardioToggle),
+      ]),
+      p.countCardioInBalance
+        ? E("p", { class: "hint" }, "Com o cardio somando à meta, prefira um nível de atividade Sedentário ou Leve para não contar o exercício duas vezes.")
+        : null,
+      E("div", { class: "section-header" }, "Resultado"),
+      resultsCard,
+      E("p", { class: "hint" }, "TMB pela fórmula de Mifflin-St Jeor. As alterações são salvas automaticamente."),
+    ]),
+  ]);
+}
+
+// ════════════ HISTÓRICO ════════════
+function sessionRow(s) {
+  const row = E("button", { class: "row tappable", onclick: () => push({ name: "sessionDetail", sessionId: s.id }) }, [
+    E("div", { class: "row-main" }, [
+      E("div", { class: "row-title with-dot" }, [typeDot(s.typeRaw), s.typeRaw]),
+      E("div", { class: "row-sub" }, [
+        chip(`${s.exercises.length} exercícios`),
+        chip(fmt.weight(db.sessionVolume(s))),
+        db.sessionDuration(s) != null ? chip(fmt.duration(db.sessionDuration(s))) : null,
+      ]),
+    ]),
+    E("span", { class: "row-date muted sm" }, fmt.shortDate(s.date)),
+    E("span", { class: "chevron", html: ICONS.back }),
+  ]);
+  attachLongPress(row, () => confirmDelete("Apagar treino?", () => { db.deleteSession(s.id); render(); }));
+  return row;
+}
+
+function cardioRow(c) {
+  const row = E("button", { class: "row tappable", onclick: () => push({ name: "cardioDetail", cardioId: c.id }) }, [
+    E("div", { class: "row-main" }, [
+      E("div", { class: "row-title with-dot" }, [typeDot("Cardio"), c.activity]),
+      E("div", { class: "row-sub" }, [
+        chip(fmt.duration(c.durationMin * 60)),
+        chip(fmt.kcal(c.kcal)),
+        c.distanceKm ? chip(`${c.distanceKm.toLocaleString("pt-BR")} km`) : null,
+      ]),
+    ]),
+    E("span", { class: "row-date muted sm" }, fmt.shortDate(c.date)),
+    E("span", { class: "chevron", html: ICONS.back }),
+  ]);
+  attachLongPress(row, () => confirmDelete("Apagar cardio?", () => { db.deleteCardio(c.id); render(); }));
+  return row;
+}
+
+function historyRoot() {
+  const items = db.historyItems();
+  const trailing = [
+    E("button", { class: "nav-btn icon-btn", title: "Importar CSV", onclick: importCSVFlow }, [icon("download", "icon")]),
+    E("button", { class: "nav-btn icon-btn", title: "Exportar CSV", onclick: exportFlow }, [icon("share", "icon")]),
+  ];
+
+  if (!items.length) {
+    return E("section", { class: "screen" }, [
+      navBar("Histórico", { trailing }),
+      emptyState("calendar", "Nenhum treino registrado", "Treinos encerrados e cardio aparecem aqui."),
+    ]);
+  }
+
+  const groups = db.groupByMonth(items);
   return E("section", { class: "screen" }, [
     navBar("Histórico", { trailing }),
     E("div", { class: "scroll" }, groups.map((g) =>
       E("div", { class: "month-group" }, [
         E("div", { class: "section-header" }, g.title),
-        E("div", { class: "card list" }, g.sessions.map((s) => {
-          const row = E("button", { class: "row tappable", onclick: () => push({ name: "sessionDetail", sessionId: s.id }) }, [
-            E("div", { class: "row-main" }, [
-              E("div", { class: "row-title with-dot" }, [typeDot(s.typeRaw), s.typeRaw]),
-              E("div", { class: "row-sub" }, [
-                chip(`${s.exercises.length} exercícios`),
-                chip(fmt.weight(db.sessionVolume(s))),
-                db.sessionDuration(s) != null ? chip(fmt.duration(db.sessionDuration(s))) : null,
-              ]),
-            ]),
-            E("span", { class: "row-date muted sm" }, fmt.shortDate(s.date)),
-            E("span", { class: "chevron", html: ICONS.back }),
-          ]);
-          attachLongPress(row, () => confirmDelete("Apagar treino?", () => { db.deleteSession(s.id); render(); }));
-          return row;
-        })),
+        E("div", { class: "card list" }, g.sessions.map((item) =>
+          item.kind === "cardio" ? cardioRow(item.entry) : sessionRow(item.session))),
       ])
     )),
   ]);
@@ -528,23 +1124,26 @@ function sessionDetailScreen(sessionId) {
 // ════════════ STATS ════════════
 function statsRoot() {
   const sessions = db.endedSessions();
-  if (!sessions.length) {
+  const balance = db.balanceHistory(28);
+  const hasNutrition = balance.some((d) => d.logged);
+
+  if (!sessions.length && !hasNutrition) {
     return E("section", { class: "screen" }, [
       navBar("Estatísticas"),
-      emptyState("chart", "Sem dados ainda", "Conclua alguns treinos para ver suas estatísticas."),
+      emptyState("chart", "Sem dados ainda", "Conclua treinos ou registre refeições para ver suas estatísticas."),
     ]);
   }
 
-  const names = db.exerciseNames(sessions);
-  if (state.statsExercise == null || !names.includes(state.statsExercise)) state.statsExercise = names[0] || null;
+  const children = [];
 
-  const selector = E("select", { class: "select", onchange: (e) => { state.statsExercise = e.target.value; render(); } },
-    names.map((n) => E("option", { value: n, selected: n === state.statsExercise }, n)));
+  if (sessions.length) {
+    const names = db.exerciseNames(sessions);
+    if (state.statsExercise == null || !names.includes(state.statsExercise)) state.statsExercise = names[0] || null;
+    const selector = E("select", { class: "select", onchange: (e) => { state.statsExercise = e.target.value; render(); } },
+      names.map((n) => E("option", { value: n, selected: n === state.statsExercise }, n)));
+    const ex = state.statsExercise;
 
-  const ex = state.statsExercise;
-  return E("section", { class: "screen" }, [
-    navBar("Estatísticas"),
-    E("div", { class: "scroll" }, [
+    children.push(
       heatmapCard(db.activityCalendar(sessions)),
       chartCard("Volume semanal por tipo", volumeChart(db.weeklyVolume(sessions))),
       ex ? E("div", { class: "stats-ex" }, [
@@ -552,7 +1151,29 @@ function statsRoot() {
         chartCard(`1RM estimado — ${ex}`, lineChart(db.oneRMProgress(ex, sessions))),
         chartCard(`Carga máxima — ${ex}`, barChart(db.loadProgress(ex, sessions))),
       ]) : null,
-    ]),
+    );
+  }
+
+  if (hasNutrition) {
+    const target = db.dailyTarget();
+    const avg = db.avgDeficit(7);
+    const streak = db.deficitStreak();
+    children.push(
+      E("div", { class: "section-header", style: "padding-top: 22px" }, "Nutrição"),
+      target != null || avg != null ? E("div", { class: "card metrics" }, [
+        target != null ? metricRow("Meta atual", fmt.kcal(target)) : null,
+        avg != null ? metricRow("Média (7 dias)", avg >= 0
+          ? `${fmt.kcal(avg)} abaixo da meta`
+          : `${fmt.kcal(-avg)} acima da meta`) : null,
+        target != null ? metricRow("Sequência na meta", streak === 1 ? "1 dia" : `${streak} dias`) : null,
+      ]) : null,
+      chartCard("Calorias por dia (4 semanas)", balanceChart(balance)),
+    );
+  }
+
+  return E("section", { class: "screen" }, [
+    navBar("Estatísticas"),
+    E("div", { class: "scroll" }, children),
   ]);
 }
 
@@ -588,6 +1209,9 @@ function heatmapCard(weeks) {
 function screenFor(s) {
   if (s.name === "setInput") return setInputScreen(s.exerciseId);
   if (s.name === "sessionDetail") return sessionDetailScreen(s.sessionId);
+  if (s.name === "profile") return profileScreen();
+  if (s.name === "cardioLog") return cardioLogScreen();
+  if (s.name === "cardioDetail") return cardioDetailScreen(s.cardioId);
   return E("div");
 }
 
@@ -651,11 +1275,7 @@ function toast(msg) {
 }
 
 // ── Exportar / importar CSV ───────────────────────────────────────────────────
-async function shareCSV() {
-  const sessions = db.endedSessions();
-  if (!sessions.length) return;
-  const csv = db.generateCSV(sessions);
-  const filename = db.exportFilename();
+async function shareCSVFile(csv, filename) {
   try {
     const file = new File([csv], filename, { type: "text/csv" });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -670,14 +1290,35 @@ async function shareCSV() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// Folha com um export por tipo de dado (só os que têm registros).
+function exportFlow() {
+  const sessions = db.endedSessions();
+  const actions = [];
+  if (sessions.length) {
+    actions.push({ label: "Treinos", onClick: () => shareCSVFile(db.generateCSV(sessions), db.exportFilename()) });
+  }
+  if (db.generateNutritionCSV().includes("\n")) {
+    actions.push({ label: "Dieta (refeições)", onClick: () => shareCSVFile(db.generateNutritionCSV(), db.exportFilename("gymlog_dieta")) });
+  }
+  if (db.generateCardioCSV().includes("\n")) {
+    actions.push({ label: "Cardio", onClick: () => shareCSVFile(db.generateCardioCSV(), db.exportFilename("gymlog_cardio")) });
+  }
+  if (db.customFoods().length) {
+    actions.push({ label: "Meus alimentos", onClick: () => shareCSVFile(db.generateFoodsCSV(), db.exportFilename("gymlog_alimentos")) });
+  }
+  if (!actions.length) { toast("Nada para exportar ainda."); return; }
+  actions.push({ label: "Cancelar", role: "cancel" });
+  openActionSheet({ title: "Exportar CSV", actions });
+}
+
 function importCSVFlow() {
   const input = E("input", { type: "file", accept: ".csv,text/csv", style: "display:none" });
   input.addEventListener("change", async () => {
     const f = input.files && input.files[0];
     if (!f) return;
     try {
-      const n = db.importCSV(await f.text());
-      toast(`${n} treino(s) importado(s).`);
+      const r = db.importAnyCSV(await f.text());
+      toast(`${r.count} ${r.kind} importado(s).`);
       render();
     } catch (e) { toast("Erro ao importar: " + e.message); }
   });

@@ -13,6 +13,23 @@ export function epley(weightKg, reps) {
   return weightKg * (1 + reps / 30);
 }
 
+// TMB (Mifflin-St Jeor): 10·peso + 6.25·altura − 5·idade, +5 (M) ou −161 (F).
+export function mifflinStJeor(weightKg, heightCm, age, sex) {
+  const base = 10 * weightKg + 6.25 * heightCm - 5 * age;
+  return sex === "F" ? base - 161 : base + 5;
+}
+
+// "1.840 kcal" (milhar no padrão pt-BR).
+export function kcal(v) {
+  return `${Math.round(v).toLocaleString("pt-BR")} kcal`;
+}
+
+// "150 g" se inteiro, senão "12,5 g" (uma casa decimal).
+export function grams(v) {
+  const r = Math.round(v * 10) / 10;
+  return `${r.toLocaleString("pt-BR")} g`;
+}
+
 // "82 kg" se inteiro, senão "82.5 kg" (uma casa decimal).
 export function weight(kg) {
   if (Math.round(kg) === kg) return `${kg.toFixed(0)} kg`;

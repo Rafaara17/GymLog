@@ -6,12 +6,36 @@
 // Persistência local em localStorage.
 //
 
-import { epley, isoString, startOfDay, startOfWeek, monthKey, monthYear } from "./format.js";
+import { epley, mifflinStJeor, isoString, startOfDay, startOfWeek, monthKey, monthYear } from "./format.js";
+import { TACO } from "./data/taco.js";
+import { CARDIO_ACTIVITIES } from "./data/mets.js";
 
 const STORAGE_KEY = "gymlog.db.v1";
 
 // Tipos de treino.
 export const TRAINING_TYPES = ["Push", "Pull", "Upper", "Lower"];
+
+// Refeições do dia.
+export const MEAL_TYPES = [
+  ["cafe", "Café da manhã"], ["almoco", "Almoço"],
+  ["jantar", "Jantar"], ["lanche", "Lanche"],
+];
+
+// Níveis de atividade (fator multiplicador da TMB → TDEE).
+export const ACTIVITY_LEVELS = [
+  ["sedentario", "Sedentário", 1.2],
+  ["leve", "Levemente ativo", 1.375],
+  ["moderado", "Moderadamente ativo", 1.55],
+  ["intenso", "Muito ativo", 1.725],
+  ["atleta", "Extremamente ativo", 1.9],
+];
+
+// Objetivos (ajuste em kcal sobre o TDEE).
+export const GOALS = [
+  ["perder", "Perder peso", -500],
+  ["manter", "Manter", 0],
+  ["ganhar", "Ganhar massa", 300],
+];
 
 // Catálogo semente, inserido na primeira execução.
 const CATALOG_SEED = [
@@ -32,7 +56,7 @@ function uid() {
 }
 
 // ── Estado em memória + persistência ───────────────────────────────────
-let db = { catalog: [], sessions: [] };
+let db = { catalog: [], sessions: [], foods: [], meals: [], cardio: [], profile: null };
 
 export function load() {
   try {
@@ -40,10 +64,14 @@ export function load() {
     if (raw) db = JSON.parse(raw);
   } catch (e) {
     console.warn("Falha ao ler dados, recomeçando:", e);
-    db = { catalog: [], sessions: [] };
+    db = { catalog: [], sessions: [], foods: [], meals: [], cardio: [], profile: null };
   }
   if (!Array.isArray(db.catalog)) db.catalog = [];
   if (!Array.isArray(db.sessions)) db.sessions = [];
+  if (!Array.isArray(db.foods)) db.foods = [];
+  if (!Array.isArray(db.meals)) db.meals = [];
+  if (!Array.isArray(db.cardio)) db.cardio = [];
+  if (db.profile != null && typeof db.profile !== "object") db.profile = null;
   seedCatalogIfNeeded();
   return db;
 }
@@ -217,6 +245,354 @@ export function lastWorkout(exerciseName) {
   return null;
 }
 
+// ── Perfil e meta calórica ────────────────────────────────────────────────
+const DEFAULT_PROFILE = {
+  weightKg: null, heightCm: null, age: null, sex: "M",
+  activityLevel: "leve", goal: "perder",
+  targetMode: "auto", manualTargetKcal: null,
+  countCardioInBalance: true,
+};
+
+export function profile() {
+  return db.profile;
+}
+
+export function saveProfile(patch) {
+  db.profile = { ...DEFAULT_PROFILE, ...(db.profile || {}), ...patch, updatedAt: Date.now() };
+  save();
+  return db.profile;
+}
+
+// TMB (Mifflin-St Jeor). null se o perfil estiver incompleto.
+export function bmr(p = db.profile) {
+  if (!p || !p.weightKg || !p.heightCm || !p.age) return null;
+  return mifflinStJeor(p.weightKg, p.heightCm, p.age, p.sex);
+}
+
+// Gasto diário total = TMB × fator do nível de atividade.
+export function tdee(p = db.profile) {
+  const base = bmr(p);
+  if (base == null) return null;
+  const level = ACTIVITY_LEVELS.find(([id]) => id === p.activityLevel);
+  return base * (level ? level[2] : 1.2);
+}
+
+// Meta diária de kcal: manual (se escolhida) ou TDEE + ajuste do objetivo,
+// arredondada para a dezena.
+export function dailyTarget(p = db.profile) {
+  if (!p) return null;
+  if (p.targetMode === "manual") return p.manualTargetKcal || null;
+  const total = tdee(p);
+  if (total == null) return null;
+  const goal = GOALS.find(([id]) => id === p.goal);
+  return Math.round((total + (goal ? goal[2] : 0)) / 10) * 10;
+}
+
+// ── Alimentos (TACO + personalizados) ─────────────────────────────────────
+// Um "food ref" é a forma comum de alimento usada pela busca e pelo registro:
+// { source: "taco"|"custom", refId, name, category, per100, unitName, unitGrams }.
+
+// Remove acentos e baixa a caixa para busca tolerante.
+function normalize(s) {
+  return s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+}
+
+// Nomes do TACO normalizados uma única vez (busca a cada tecla).
+let tacoNames = null;
+function tacoNormalized() {
+  if (!tacoNames) tacoNames = TACO.map((r) => normalize(r[0]));
+  return tacoNames;
+}
+
+export function tacoFood(index) {
+  const row = TACO[index];
+  if (!row) return null;
+  return {
+    source: "taco", refId: index, name: row[0], category: row[1],
+    per100: { kcal: row[2], protein: row[3], carbs: row[4], fat: row[5] },
+    unitName: null, unitGrams: null,
+  };
+}
+
+function customFoodRef(f) {
+  return {
+    source: "custom", refId: f.id, name: f.name, category: "Meus alimentos",
+    per100: f.per100, unitName: f.unitName || null, unitGrams: f.unitGrams || null,
+  };
+}
+
+export function createFood({ name, per100, unitName = null, unitGrams = null }) {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const clean = (v) => Math.max(0, Math.round((parseFloat(v) || 0) * 10) / 10);
+  const food = {
+    id: uid(), name: trimmed,
+    per100: { kcal: clean(per100.kcal), protein: clean(per100.protein), carbs: clean(per100.carbs), fat: clean(per100.fat) },
+    unitName: unitName ? String(unitName).trim() || null : null,
+    unitGrams: unitGrams ? Math.max(0, parseFloat(unitGrams) || 0) || null : null,
+    createdAt: Date.now(),
+  };
+  db.foods.push(food);
+  save();
+  return food;
+}
+
+export function deleteFood(id) {
+  db.foods = db.foods.filter((f) => f.id !== id);
+  save();
+}
+
+export function customFoods() {
+  return [...db.foods].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+}
+
+export function foodById(id) {
+  return db.foods.find((f) => f.id === id) || null;
+}
+
+// Resolve um {source, refId} para a definição atual do alimento (ou null).
+export function resolveFoodRef(ref) {
+  if (!ref) return null;
+  if (ref.source === "taco") return tacoFood(ref.refId);
+  if (ref.source === "custom") {
+    const f = foodById(ref.refId);
+    return f ? customFoodRef(f) : null;
+  }
+  return null;
+}
+
+// Alimentos usados recentemente, por frequência + recência (para busca vazia).
+export function recentFoods(limit = 8) {
+  const byKey = new Map();
+  for (const m of db.meals) {
+    const key = `${m.foodRef.source}|${m.foodRef.refId}`;
+    const cur = byKey.get(key) || { count: 0, lastUsed: 0, ref: m.foodRef };
+    cur.count += 1;
+    cur.lastUsed = Math.max(cur.lastUsed, m.date);
+    byKey.set(key, cur);
+  }
+  return [...byKey.values()]
+    .sort((a, b) => (b.count - a.count) || (b.lastUsed - a.lastUsed))
+    .map((x) => resolveFoodRef(x.ref))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+// Busca mesclada sem acentos: recentes → personalizados → TACO.
+// A consulta é quebrada em termos e todos precisam aparecer no nome
+// (ex.: "arroz integral" encontra "Arroz, integral, cozido").
+export function searchFoods(query, limit = 60) {
+  const tokens = normalize(query.trim()).split(/\s+/).filter(Boolean);
+  if (!tokens.length) return [];
+  const matches = (name) => tokens.every((t) => name.includes(t));
+  const seen = new Set();
+  const results = [];
+  const push = (ref) => {
+    if (!ref) return;
+    const key = `${ref.source}|${ref.refId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push(ref);
+  };
+  for (const ref of recentFoods(12)) {
+    if (matches(normalize(ref.name))) push(ref);
+  }
+  for (const f of customFoods()) {
+    if (matches(normalize(f.name))) push(customFoodRef(f));
+  }
+  // No TACO, quem começa pelo primeiro termo vem antes de quem só o contém.
+  const names = tacoNormalized();
+  const starts = [], contains = [];
+  for (let i = 0; i < names.length; i++) {
+    if (!matches(names[i])) continue;
+    (names[i].startsWith(tokens[0]) ? starts : contains).push(i);
+  }
+  for (const i of starts.concat(contains)) {
+    if (results.length >= limit) break;
+    push(tacoFood(i));
+  }
+  return results.slice(0, limit);
+}
+
+// ── Refeições ─────────────────────────────────────────────────────────────
+// Cada entrada guarda um retrato (per100) do alimento no momento do registro:
+// editar o alimento (ou regenerar o TACO) depois não reescreve o histórico.
+
+export function logMeal({ foodRef, name, per100, grams, mealType, date = Date.now() }) {
+  const entry = {
+    id: uid(), date, mealType,
+    foodRef: { source: foodRef.source, refId: foodRef.refId },
+    name, grams,
+    per100: { kcal: per100.kcal, protein: per100.protein, carbs: per100.carbs, fat: per100.fat },
+  };
+  db.meals.push(entry);
+  save();
+  return entry;
+}
+
+export function updateMealEntry(id, { grams, mealType } = {}) {
+  const entry = db.meals.find((m) => m.id === id);
+  if (!entry) return;
+  if (grams != null && grams > 0) entry.grams = grams;
+  if (mealType) entry.mealType = mealType;
+  save();
+}
+
+export function deleteMealEntry(id) {
+  db.meals = db.meals.filter((m) => m.id !== id);
+  save();
+}
+
+// kcal e macros de uma entrada = per100 × gramas / 100.
+export function entryMacros(entry) {
+  const f = entry.grams / 100;
+  return {
+    kcal: entry.per100.kcal * f,
+    protein: entry.per100.protein * f,
+    carbs: entry.per100.carbs * f,
+    fat: entry.per100.fat * f,
+  };
+}
+
+// Entradas do dia agrupadas por refeição: { cafe: [...], almoco: [...], ... }.
+export function mealsForDay(dayMs) {
+  const groups = {};
+  for (const [id] of MEAL_TYPES) groups[id] = [];
+  for (const m of db.meals) {
+    if (startOfDay(m.date) !== dayMs) continue;
+    (groups[m.mealType] || (groups[m.mealType] = [])).push(m);
+  }
+  for (const list of Object.values(groups)) list.sort((a, b) => a.date - b.date);
+  return groups;
+}
+
+// Totais consumidos no dia.
+export function dailyNutrition(dayMs) {
+  const total = { kcal: 0, protein: 0, carbs: 0, fat: 0, entryCount: 0 };
+  for (const m of db.meals) {
+    if (startOfDay(m.date) !== dayMs) continue;
+    const x = entryMacros(m);
+    total.kcal += x.kcal;
+    total.protein += x.protein;
+    total.carbs += x.carbs;
+    total.fat += x.fat;
+    total.entryCount += 1;
+  }
+  return total;
+}
+
+// kcal de cardio registradas no dia.
+export function dailyCardioKcal(dayMs) {
+  return db.cardio.reduce((s, c) => s + (startOfDay(c.date) === dayMs ? c.kcal : 0), 0);
+}
+
+// Saldo do dia frente à meta. Se o perfil pedir (countCardioInBalance),
+// o cardio soma como gasto extra na "permissão" do dia.
+export function dailyBalance(dayMs) {
+  const p = db.profile;
+  const target = dailyTarget(p);
+  const macros = dailyNutrition(dayMs);
+  const cardioKcal = dailyCardioKcal(dayMs);
+  const allowance = target == null ? null : target + (p && p.countCardioInBalance ? cardioKcal : 0);
+  return {
+    target, allowance, cardioKcal, macros,
+    consumed: macros.kcal,
+    remaining: allowance == null ? null : allowance - macros.kcal,
+    logged: macros.entryCount > 0,
+  };
+}
+
+// ── Progresso nutricional ─────────────────────────────────────────────────
+const DAY_MS = 86_400_000;
+
+// Saldo diário dos últimos `days` dias (mais antigo → mais recente).
+// Dias sem refeição registrada vêm com logged: false.
+export function balanceHistory(days = 28) {
+  const today = startOfDay(Date.now());
+  const out = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const day = startOfDay(today - i * DAY_MS + DAY_MS / 2);
+    const b = dailyBalance(day);
+    out.push({
+      date: day, consumed: b.consumed, target: b.target,
+      allowance: b.allowance, cardioKcal: b.cardioKcal, logged: b.logged,
+    });
+  }
+  return out;
+}
+
+// Dias seguidos dentro da meta, terminando hoje (ou ontem, se hoje ainda
+// não tem registro). Hoje estourado zera a sequência.
+export function deficitStreak() {
+  let day = startOfDay(Date.now());
+  let streak = 0;
+  const today = dailyBalance(day);
+  if (today.logged) {
+    if (today.remaining == null || today.remaining < 0) return 0;
+    streak += 1;
+  }
+  for (;;) {
+    day = startOfDay(day - DAY_MS / 2);
+    const b = dailyBalance(day);
+    if (!b.logged || b.remaining == null || b.remaining < 0) break;
+    streak += 1;
+  }
+  return streak;
+}
+
+// Saldo médio (permissão − consumido) nos últimos `days` dias com registro.
+// Positivo = abaixo da meta (déficit); negativo = acima.
+export function avgDeficit(days = 7) {
+  const hist = balanceHistory(days).filter((d) => d.logged && d.allowance != null);
+  if (!hist.length) return null;
+  return hist.reduce((s, d) => s + (d.allowance - d.consumed), 0) / hist.length;
+}
+
+// ── Cardio ────────────────────────────────────────────────────────────────
+// kcal, MET e peso usados ficam gravados na entrada (mudar o perfil depois
+// não reescreve o histórico).
+
+export function logCardio({ activityId, intensity, durationMin, distanceKm = null, date = Date.now() }) {
+  const activity = CARDIO_ACTIVITIES.find((a) => a.id === activityId) || CARDIO_ACTIVITIES[CARDIO_ACTIVITIES.length - 1];
+  const met = activity.mets[intensity] || activity.mets.moderado;
+  const weightKgUsed = (db.profile && db.profile.weightKg) || 70;
+  const entry = {
+    id: uid(), date,
+    activityId: activity.id, activity: activity.name,
+    intensity, durationMin,
+    distanceKm: distanceKm || null,
+    met, weightKgUsed,
+    kcal: Math.round((met * 3.5 * weightKgUsed) / 200 * durationMin),
+  };
+  db.cardio.push(entry);
+  save();
+  return entry;
+}
+
+export function deleteCardio(id) {
+  db.cardio = db.cardio.filter((c) => c.id !== id);
+  save();
+}
+
+export function cardioById(id) {
+  return db.cardio.find((c) => c.id === id) || null;
+}
+
+export function cardioForDay(dayMs) {
+  return db.cardio
+    .filter((c) => startOfDay(c.date) === dayMs)
+    .sort((a, b) => a.date - b.date);
+}
+
+// Treinos encerrados + cardio, mesclados por data (desc), para o Histórico.
+export function historyItems() {
+  const items = [
+    ...endedSessions().map((session) => ({ kind: "workout", date: session.date, session })),
+    ...db.cardio.map((entry) => ({ kind: "cardio", date: entry.date, entry })),
+  ];
+  return items.sort((a, b) => b.date - a.date);
+}
+
 // ── Histórico (agrupamento por mês) ───────────────────────────────────────
 export function groupByMonth(sessions) {
   const buckets = new Map();
@@ -335,10 +711,52 @@ export function generateCSV(sessions) {
   return lines.join("\n");
 }
 
-export function exportFilename() {
+export function exportFilename(prefix = "gymlog") {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
-  return `gymlog_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.csv`;
+  return `${prefix}_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.csv`;
+}
+
+// ── Exportação CSV: dieta, cardio e alimentos ─────────────────────────────
+const NUTRITION_CSV_HEADER = "date,meal_type,food,source,grams,kcal,protein_g,carbs_g,fat_g";
+const CARDIO_CSV_HEADER = "date,activity,intensity,duration_min,distance_km,met,weight_kg,kcal";
+const FOODS_CSV_HEADER = "name,kcal_100g,protein_100g,carbs_100g,fat_100g,unit_name,unit_grams";
+
+export function generateNutritionCSV() {
+  const lines = [NUTRITION_CSV_HEADER];
+  for (const m of [...db.meals].sort((a, b) => a.date - b.date)) {
+    const x = entryMacros(m);
+    lines.push([
+      isoString(m.date), m.mealType, escapeCSV(m.name), m.foodRef.source,
+      String(m.grams), x.kcal.toFixed(1), x.protein.toFixed(1), x.carbs.toFixed(1), x.fat.toFixed(1),
+    ].join(","));
+  }
+  return lines.join("\n");
+}
+
+export function generateCardioCSV() {
+  const lines = [CARDIO_CSV_HEADER];
+  for (const c of [...db.cardio].sort((a, b) => a.date - b.date)) {
+    lines.push([
+      isoString(c.date), escapeCSV(c.activity), c.intensity, String(c.durationMin),
+      c.distanceKm == null ? "" : String(c.distanceKm),
+      String(c.met), String(c.weightKgUsed), String(c.kcal),
+    ].join(","));
+  }
+  return lines.join("\n");
+}
+
+export function generateFoodsCSV() {
+  const lines = [FOODS_CSV_HEADER];
+  for (const f of customFoods()) {
+    lines.push([
+      escapeCSV(f.name),
+      String(f.per100.kcal), String(f.per100.protein), String(f.per100.carbs), String(f.per100.fat),
+      f.unitName ? escapeCSV(f.unitName) : "",
+      f.unitGrams == null ? "" : String(f.unitGrams),
+    ].join(","));
+  }
+  return lines.join("\n");
 }
 
 // ── Importação CSV ────────────────────────────────────────────────────────
@@ -411,4 +829,96 @@ export function importCSV(text) {
   }
   save();
   return newSessions.length;
+}
+
+// Detecta o tipo do CSV pelo cabeçalho e importa. Retorna { kind, count }.
+export function importAnyCSV(text) {
+  const first = text.split("\n", 1)[0].trim();
+  if (first.startsWith("date,training_type,exercise")) return { kind: "treino(s)", count: importCSV(text) };
+  if (first.startsWith("date,meal_type")) return { kind: "refeição(ões)", count: importNutritionCSV(text) };
+  if (first.startsWith("date,activity")) return { kind: "cardio(s)", count: importCardioCSV(text) };
+  if (first.startsWith("name,kcal_100g")) return { kind: "alimento(s)", count: importFoodsCSV(text) };
+  throw new Error("Cabeçalho não reconhecido.");
+}
+
+function importNutritionCSV(text) {
+  const rows = text.split("\n").filter((l) => l.trim().length > 0).slice(1);
+  const round2 = (v) => Math.round(v * 100) / 100;
+  let count = 0;
+  for (const line of rows) {
+    const cols = parseCSVLine(line);
+    if (cols.length < 9) continue;
+    const date = Date.parse(cols[0]) || Date.now();
+    const mealType = MEAL_TYPES.some(([id]) => id === cols[1]) ? cols[1] : "lanche";
+    const name = cols[2].trim();
+    const grams = parseFloat(cols[4]) || 0;
+    if (!name || grams <= 0) continue;
+    // Reconstrói o per100 a partir dos totais exportados.
+    db.meals.push({
+      id: uid(), date, mealType,
+      foodRef: { source: "import", refId: null },
+      name, grams,
+      per100: {
+        kcal: round2((parseFloat(cols[5]) || 0) / grams * 100),
+        protein: round2((parseFloat(cols[6]) || 0) / grams * 100),
+        carbs: round2((parseFloat(cols[7]) || 0) / grams * 100),
+        fat: round2((parseFloat(cols[8]) || 0) / grams * 100),
+      },
+    });
+    count += 1;
+  }
+  save();
+  return count;
+}
+
+function importCardioCSV(text) {
+  const rows = text.split("\n").filter((l) => l.trim().length > 0).slice(1);
+  let count = 0;
+  for (const line of rows) {
+    const cols = parseCSVLine(line);
+    if (cols.length < 8) continue;
+    const date = Date.parse(cols[0]) || Date.now();
+    const name = cols[1].trim();
+    const durationMin = parseFloat(cols[3]) || 0;
+    if (!name || durationMin <= 0) continue;
+    const known = CARDIO_ACTIVITIES.find((a) => a.name.toLowerCase() === name.toLowerCase());
+    db.cardio.push({
+      id: uid(), date,
+      activityId: known ? known.id : "outro", activity: name,
+      intensity: ["leve", "moderado", "intenso"].includes(cols[2]) ? cols[2] : "moderado",
+      durationMin,
+      distanceKm: parseFloat(cols[4]) || null,
+      met: parseFloat(cols[5]) || 5,
+      weightKgUsed: parseFloat(cols[6]) || 70,
+      kcal: Math.round(parseFloat(cols[7]) || 0),
+    });
+    count += 1;
+  }
+  save();
+  return count;
+}
+
+function importFoodsCSV(text) {
+  const rows = text.split("\n").filter((l) => l.trim().length > 0).slice(1);
+  let count = 0;
+  for (const line of rows) {
+    const cols = parseCSVLine(line);
+    if (cols.length < 5) continue;
+    const name = cols[0].trim();
+    if (!name) continue;
+    if (db.foods.some((f) => f.name.toLowerCase() === name.toLowerCase())) continue;
+    db.foods.push({
+      id: uid(), name,
+      per100: {
+        kcal: parseFloat(cols[1]) || 0, protein: parseFloat(cols[2]) || 0,
+        carbs: parseFloat(cols[3]) || 0, fat: parseFloat(cols[4]) || 0,
+      },
+      unitName: cols[5] ? cols[5].trim() : null,
+      unitGrams: parseFloat(cols[6]) || null,
+      createdAt: Date.now(),
+    });
+    count += 1;
+  }
+  save();
+  return count;
 }

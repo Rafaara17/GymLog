@@ -6,9 +6,11 @@
 
 import { dayMonth } from "./format.js";
 
-// Cores por tipo de treino (System Colors do iOS).
+// Cores por tipo de treino (System Colors do iOS) + cardio (rosa Fitness).
+export const CARDIO_COLOR = "#FF375F";
 export const TYPE_COLORS = {
   Push: "#0A84FF", Pull: "#30D158", Upper: "#FF9F0A", Lower: "#BF5AF2",
+  Cardio: CARDIO_COLOR,
 };
 
 const W = 360, H = 240;
@@ -178,6 +180,37 @@ export function lineChart(data) {
   const labels = xLabels(data, (d) => dayMonth(d.date));
 
   return `${svgOpen()}${yAxis(max)}<polygon points="${area}" class="area"/><polyline points="${pts}" class="line"/>${dots}${labels}</svg>`;
+}
+
+// ── Calorias por dia vs meta (barras + linha tracejada da meta) ───────────
+export function balanceChart(days) {
+  const data = days.filter((d) => d.logged);
+  if (!data.length) return empty("Sem refeições registradas.");
+
+  // Linha da meta = permissão mais recente conhecida (meta + cardio do dia).
+  const targetLine = [...data].reverse().find((d) => d.allowance != null)?.allowance ?? null;
+  const max = niceMax(Math.max(...data.map((d) => d.consumed), targetLine || 0));
+  const n = data.length;
+  const slot = plotW / n;
+  const barW = Math.min(26, slot * 0.6);
+
+  const bars = data.map((d, i) => {
+    const cx = PAD.l + slot * (i + 0.5);
+    const h = (d.consumed / max) * plotH;
+    const y = PAD.t + plotH - h;
+    const cls = d.allowance == null ? "bar" : d.consumed <= d.allowance ? "bar-under" : "bar-over";
+    return `<rect x="${(cx - barW / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, h).toFixed(1)}" class="${cls}" rx="2"/>`;
+  }).join("");
+
+  let target = "";
+  if (targetLine != null && targetLine <= max) {
+    const y = PAD.t + plotH - (targetLine / max) * plotH;
+    target = `<line x1="${PAD.l}" y1="${y.toFixed(1)}" x2="${W - PAD.r}" y2="${y.toFixed(1)}" class="target-line"/>` +
+      `<text x="${W - PAD.r}" y="${(y - 4).toFixed(1)}" class="axis-label" text-anchor="end">meta</text>`;
+  }
+
+  const labels = xLabels(data, (d) => dayMonth(d.date));
+  return `${svgOpen()}${yAxis(max)}${bars}${target}${labels}</svg>`;
 }
 
 // ── Carga máxima por dia (barras) ─────────────────────────────────────────

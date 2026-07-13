@@ -1058,7 +1058,7 @@ function historyRoot() {
   const items = db.historyItems();
   const trailing = [
     E("button", { class: "nav-btn icon-btn", title: "Importar CSV", onclick: importCSVFlow }, [icon("download", "icon")]),
-    E("button", { class: "nav-btn icon-btn", title: "Exportar CSV", disabled: !items.length, onclick: shareCSV }, [icon("share", "icon")]),
+    E("button", { class: "nav-btn icon-btn", title: "Exportar CSV", onclick: exportFlow }, [icon("share", "icon")]),
   ];
 
   if (!items.length) {
@@ -1275,11 +1275,7 @@ function toast(msg) {
 }
 
 // ── Exportar / importar CSV ───────────────────────────────────────────────────
-async function shareCSV() {
-  const sessions = db.endedSessions();
-  if (!sessions.length) return;
-  const csv = db.generateCSV(sessions);
-  const filename = db.exportFilename();
+async function shareCSVFile(csv, filename) {
   try {
     const file = new File([csv], filename, { type: "text/csv" });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -1294,14 +1290,35 @@ async function shareCSV() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// Folha com um export por tipo de dado (só os que têm registros).
+function exportFlow() {
+  const sessions = db.endedSessions();
+  const actions = [];
+  if (sessions.length) {
+    actions.push({ label: "Treinos", onClick: () => shareCSVFile(db.generateCSV(sessions), db.exportFilename()) });
+  }
+  if (db.generateNutritionCSV().includes("\n")) {
+    actions.push({ label: "Dieta (refeições)", onClick: () => shareCSVFile(db.generateNutritionCSV(), db.exportFilename("gymlog_dieta")) });
+  }
+  if (db.generateCardioCSV().includes("\n")) {
+    actions.push({ label: "Cardio", onClick: () => shareCSVFile(db.generateCardioCSV(), db.exportFilename("gymlog_cardio")) });
+  }
+  if (db.customFoods().length) {
+    actions.push({ label: "Meus alimentos", onClick: () => shareCSVFile(db.generateFoodsCSV(), db.exportFilename("gymlog_alimentos")) });
+  }
+  if (!actions.length) { toast("Nada para exportar ainda."); return; }
+  actions.push({ label: "Cancelar", role: "cancel" });
+  openActionSheet({ title: "Exportar CSV", actions });
+}
+
 function importCSVFlow() {
   const input = E("input", { type: "file", accept: ".csv,text/csv", style: "display:none" });
   input.addEventListener("change", async () => {
     const f = input.files && input.files[0];
     if (!f) return;
     try {
-      const n = db.importCSV(await f.text());
-      toast(`${n} treino(s) importado(s).`);
+      const r = db.importAnyCSV(await f.text());
+      toast(`${r.count} ${r.kind} importado(s).`);
       render();
     } catch (e) { toast("Erro ao importar: " + e.message); }
   });

@@ -708,10 +708,52 @@ export function generateCSV(sessions) {
   return lines.join("\n");
 }
 
-export function exportFilename() {
+export function exportFilename(prefix = "gymlog") {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
-  return `gymlog_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.csv`;
+  return `${prefix}_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.csv`;
+}
+
+// ── Exportação CSV: dieta, cardio e alimentos ─────────────────────────────
+const NUTRITION_CSV_HEADER = "date,meal_type,food,source,grams,kcal,protein_g,carbs_g,fat_g";
+const CARDIO_CSV_HEADER = "date,activity,intensity,duration_min,distance_km,met,weight_kg,kcal";
+const FOODS_CSV_HEADER = "name,kcal_100g,protein_100g,carbs_100g,fat_100g,unit_name,unit_grams";
+
+export function generateNutritionCSV() {
+  const lines = [NUTRITION_CSV_HEADER];
+  for (const m of [...db.meals].sort((a, b) => a.date - b.date)) {
+    const x = entryMacros(m);
+    lines.push([
+      isoString(m.date), m.mealType, escapeCSV(m.name), m.foodRef.source,
+      String(m.grams), x.kcal.toFixed(1), x.protein.toFixed(1), x.carbs.toFixed(1), x.fat.toFixed(1),
+    ].join(","));
+  }
+  return lines.join("\n");
+}
+
+export function generateCardioCSV() {
+  const lines = [CARDIO_CSV_HEADER];
+  for (const c of [...db.cardio].sort((a, b) => a.date - b.date)) {
+    lines.push([
+      isoString(c.date), escapeCSV(c.activity), c.intensity, String(c.durationMin),
+      c.distanceKm == null ? "" : String(c.distanceKm),
+      String(c.met), String(c.weightKgUsed), String(c.kcal),
+    ].join(","));
+  }
+  return lines.join("\n");
+}
+
+export function generateFoodsCSV() {
+  const lines = [FOODS_CSV_HEADER];
+  for (const f of customFoods()) {
+    lines.push([
+      escapeCSV(f.name),
+      String(f.per100.kcal), String(f.per100.protein), String(f.per100.carbs), String(f.per100.fat),
+      f.unitName ? escapeCSV(f.unitName) : "",
+      f.unitGrams == null ? "" : String(f.unitGrams),
+    ].join(","));
+  }
+  return lines.join("\n");
 }
 
 // ── Importação CSV ────────────────────────────────────────────────────────
@@ -784,4 +826,96 @@ export function importCSV(text) {
   }
   save();
   return newSessions.length;
+}
+
+// Detecta o tipo do CSV pelo cabeçalho e importa. Retorna { kind, count }.
+export function importAnyCSV(text) {
+  const first = text.split("\n", 1)[0].trim();
+  if (first.startsWith("date,training_type,exercise")) return { kind: "treino(s)", count: importCSV(text) };
+  if (first.startsWith("date,meal_type")) return { kind: "refeição(ões)", count: importNutritionCSV(text) };
+  if (first.startsWith("date,activity")) return { kind: "cardio(s)", count: importCardioCSV(text) };
+  if (first.startsWith("name,kcal_100g")) return { kind: "alimento(s)", count: importFoodsCSV(text) };
+  throw new Error("Cabeçalho não reconhecido.");
+}
+
+function importNutritionCSV(text) {
+  const rows = text.split("\n").filter((l) => l.trim().length > 0).slice(1);
+  const round2 = (v) => Math.round(v * 100) / 100;
+  let count = 0;
+  for (const line of rows) {
+    const cols = parseCSVLine(line);
+    if (cols.length < 9) continue;
+    const date = Date.parse(cols[0]) || Date.now();
+    const mealType = MEAL_TYPES.some(([id]) => id === cols[1]) ? cols[1] : "lanche";
+    const name = cols[2].trim();
+    const grams = parseFloat(cols[4]) || 0;
+    if (!name || grams <= 0) continue;
+    // Reconstrói o per100 a partir dos totais exportados.
+    db.meals.push({
+      id: uid(), date, mealType,
+      foodRef: { source: "import", refId: null },
+      name, grams,
+      per100: {
+        kcal: round2((parseFloat(cols[5]) || 0) / grams * 100),
+        protein: round2((parseFloat(cols[6]) || 0) / grams * 100),
+        carbs: round2((parseFloat(cols[7]) || 0) / grams * 100),
+        fat: round2((parseFloat(cols[8]) || 0) / grams * 100),
+      },
+    });
+    count += 1;
+  }
+  save();
+  return count;
+}
+
+function importCardioCSV(text) {
+  const rows = text.split("\n").filter((l) => l.trim().length > 0).slice(1);
+  let count = 0;
+  for (const line of rows) {
+    const cols = parseCSVLine(line);
+    if (cols.length < 8) continue;
+    const date = Date.parse(cols[0]) || Date.now();
+    const name = cols[1].trim();
+    const durationMin = parseFloat(cols[3]) || 0;
+    if (!name || durationMin <= 0) continue;
+    const known = CARDIO_ACTIVITIES.find((a) => a.name.toLowerCase() === name.toLowerCase());
+    db.cardio.push({
+      id: uid(), date,
+      activityId: known ? known.id : "outro", activity: name,
+      intensity: ["leve", "moderado", "intenso"].includes(cols[2]) ? cols[2] : "moderado",
+      durationMin,
+      distanceKm: parseFloat(cols[4]) || null,
+      met: parseFloat(cols[5]) || 5,
+      weightKgUsed: parseFloat(cols[6]) || 70,
+      kcal: Math.round(parseFloat(cols[7]) || 0),
+    });
+    count += 1;
+  }
+  save();
+  return count;
+}
+
+function importFoodsCSV(text) {
+  const rows = text.split("\n").filter((l) => l.trim().length > 0).slice(1);
+  let count = 0;
+  for (const line of rows) {
+    const cols = parseCSVLine(line);
+    if (cols.length < 5) continue;
+    const name = cols[0].trim();
+    if (!name) continue;
+    if (db.foods.some((f) => f.name.toLowerCase() === name.toLowerCase())) continue;
+    db.foods.push({
+      id: uid(), name,
+      per100: {
+        kcal: parseFloat(cols[1]) || 0, protein: parseFloat(cols[2]) || 0,
+        carbs: parseFloat(cols[3]) || 0, fat: parseFloat(cols[4]) || 0,
+      },
+      unitName: cols[5] ? cols[5].trim() : null,
+      unitGrams: parseFloat(cols[6]) || null,
+      createdAt: Date.now(),
+    });
+    count += 1;
+  }
+  save();
+  return count;
 }

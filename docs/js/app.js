@@ -8,6 +8,7 @@
 import * as db from "./store.js";
 import * as fmt from "./format.js";
 import { volumeChart, lineChart, barChart, heatmapChart, TYPE_COLORS } from "./charts.js";
+import { CARDIO_ACTIVITIES, INTENSITIES } from "./data/mets.js";
 
 // ── Mini-helper de DOM (hyperscript) ───────────────────────────────────────
 function E(tag, attrs = {}, children = []) {
@@ -167,9 +168,116 @@ function startWorkout() {
       E("button", {
         class: "btn-primary big", onclick: () => { db.startSession(state.startType); render(); },
       }, [icon("play", "icon sm"), E("span", {}, "Iniciar")]),
+      E("button", {
+        class: "btn-secondary", onclick: () => push({ name: "cardioLog" }),
+      }, [icon("heart", "icon sm"), E("span", {}, "Registrar cardio")]),
     ]),
   ]);
   return screen;
+}
+
+// ════════════ CARDIO ════════════
+function cardioLogScreen() {
+  let activity = CARDIO_ACTIVITIES[0];
+  let intensity = "moderado";
+  const hasWeight = !!db.profile()?.weightKg;
+  const weight = db.profile()?.weightKg || 70;
+
+  const preview = E("div", { class: "amount-preview" });
+  const durField = makeStepperField(30, { step: 5, decimals: 0 }, () => updatePreview());
+  function updatePreview() {
+    const met = activity.mets[intensity];
+    const k = Math.round((met * 3.5 * weight) / 200 * durField.get());
+    preview.textContent = `≈ ${fmt.kcal(k)} · MET ${met.toLocaleString("pt-BR")} × ${weight} kg × ${durField.get()} min`;
+  }
+
+  const distInput = E("input", { class: "form-input", type: "number", inputmode: "decimal", min: "0", placeholder: "5" });
+  const distWrap = E("div", { class: "card list", style: activity.hasDistance ? "" : "display:none" }, [
+    E("div", { class: "form-row" }, [E("span", { class: "form-label" }, "Distância (km) — opcional"), distInput]),
+  ]);
+
+  const grid = E("div", { class: "activity-grid" }, CARDIO_ACTIVITIES.map((a) =>
+    E("button", {
+      class: "activity-chip" + (a.id === activity.id ? " active" : ""),
+      onclick: (e) => {
+        activity = a;
+        grid.querySelectorAll(".activity-chip").forEach((b) => b.classList.remove("active"));
+        e.currentTarget.classList.add("active");
+        distWrap.style.display = a.hasDistance ? "" : "none";
+        updatePreview();
+      },
+    }, a.name)));
+
+  const intSeg = E("div", { class: "segmented" }, INTENSITIES.map(([id, label]) =>
+    E("button", {
+      class: "seg" + (id === intensity ? " active" : ""),
+      onclick: (e) => {
+        intensity = id;
+        intSeg.querySelectorAll(".seg").forEach((b) => b.classList.remove("active"));
+        e.currentTarget.classList.add("active");
+        updatePreview();
+      },
+    }, label)));
+
+  updatePreview();
+
+  return E("section", { class: "screen" }, [
+    navBar("Cardio", { back: pop, inline: true }),
+    E("div", { class: "scroll" }, [
+      E("div", { class: "section-header" }, "Atividade"),
+      grid,
+      E("div", { class: "section-header" }, "Intensidade"),
+      E("div", { class: "seg-wrap" }, [intSeg]),
+      E("div", { class: "section-header" }, "Duração (min)"),
+      E("div", { class: "cardio-dur" }, [durField.el]),
+      E("div", { class: "section-header" }, "Distância"),
+      distWrap,
+      E("div", { class: "cardio-save" }, [
+        preview,
+        hasWeight ? null : E("p", { class: "hint" }, "Usando 70 kg na estimativa — defina seu peso no Perfil (aba Dieta)."),
+        E("button", {
+          class: "btn-primary green",
+          onclick: () => {
+            const min = durField.get();
+            if (min <= 0) return;
+            db.logCardio({
+              activityId: activity.id, intensity, durationMin: min,
+              distanceKm: parseFloat(distInput.value) || null,
+            });
+            toast(`${activity.name} registrado.`);
+            pop();
+          },
+        }, [icon("check", "icon sm"), E("span", {}, "Salvar cardio")]),
+      ]),
+    ]),
+  ]);
+}
+
+function cardioDetailScreen(cardioId) {
+  const c = db.cardioById(cardioId);
+  if (!c) { pop(); return E("div"); }
+  const intensityLabel = (INTENSITIES.find(([id]) => id === c.intensity) || [])[1] || c.intensity;
+
+  return E("section", { class: "screen" }, [
+    navBar(c.activity, { back: pop, inline: true }),
+    E("div", { class: "scroll" }, [
+      E("div", { class: "section-header" }, "Resumo"),
+      E("div", { class: "card metrics" }, [
+        metricRow("Data", fmt.dateTime(c.date)),
+        metricRow("Intensidade", intensityLabel),
+        metricRow("Duração", fmt.duration(c.durationMin * 60)),
+        c.distanceKm ? metricRow("Distância", `${c.distanceKm.toLocaleString("pt-BR")} km`) : null,
+        metricRow("Calorias", fmt.kcal(c.kcal)),
+        metricRow("Cálculo", `MET ${c.met.toLocaleString("pt-BR")} × ${c.weightKgUsed} kg`),
+      ]),
+      E("div", { class: "card list", style: "margin-top: 18px" }, [
+        E("button", {
+          class: "row tappable",
+          onclick: () => confirmDelete("Apagar cardio?", () => { db.deleteCardio(c.id); pop(); }),
+        }, [E("span", { class: "row-title", style: "color: var(--danger)" }, "Apagar registro")]),
+      ]),
+    ]),
+  ]);
 }
 
 function activeWorkout(session) {
@@ -912,42 +1020,62 @@ function profileScreen() {
 }
 
 // ════════════ HISTÓRICO ════════════
+function sessionRow(s) {
+  const row = E("button", { class: "row tappable", onclick: () => push({ name: "sessionDetail", sessionId: s.id }) }, [
+    E("div", { class: "row-main" }, [
+      E("div", { class: "row-title with-dot" }, [typeDot(s.typeRaw), s.typeRaw]),
+      E("div", { class: "row-sub" }, [
+        chip(`${s.exercises.length} exercícios`),
+        chip(fmt.weight(db.sessionVolume(s))),
+        db.sessionDuration(s) != null ? chip(fmt.duration(db.sessionDuration(s))) : null,
+      ]),
+    ]),
+    E("span", { class: "row-date muted sm" }, fmt.shortDate(s.date)),
+    E("span", { class: "chevron", html: ICONS.back }),
+  ]);
+  attachLongPress(row, () => confirmDelete("Apagar treino?", () => { db.deleteSession(s.id); render(); }));
+  return row;
+}
+
+function cardioRow(c) {
+  const row = E("button", { class: "row tappable", onclick: () => push({ name: "cardioDetail", cardioId: c.id }) }, [
+    E("div", { class: "row-main" }, [
+      E("div", { class: "row-title with-dot" }, [typeDot("Cardio"), c.activity]),
+      E("div", { class: "row-sub" }, [
+        chip(fmt.duration(c.durationMin * 60)),
+        chip(fmt.kcal(c.kcal)),
+        c.distanceKm ? chip(`${c.distanceKm.toLocaleString("pt-BR")} km`) : null,
+      ]),
+    ]),
+    E("span", { class: "row-date muted sm" }, fmt.shortDate(c.date)),
+    E("span", { class: "chevron", html: ICONS.back }),
+  ]);
+  attachLongPress(row, () => confirmDelete("Apagar cardio?", () => { db.deleteCardio(c.id); render(); }));
+  return row;
+}
+
 function historyRoot() {
-  const sessions = db.endedSessions();
+  const items = db.historyItems();
   const trailing = [
     E("button", { class: "nav-btn icon-btn", title: "Importar CSV", onclick: importCSVFlow }, [icon("download", "icon")]),
-    E("button", { class: "nav-btn icon-btn", title: "Exportar CSV", disabled: !sessions.length, onclick: shareCSV }, [icon("share", "icon")]),
+    E("button", { class: "nav-btn icon-btn", title: "Exportar CSV", disabled: !items.length, onclick: shareCSV }, [icon("share", "icon")]),
   ];
 
-  if (!sessions.length) {
+  if (!items.length) {
     return E("section", { class: "screen" }, [
       navBar("Histórico", { trailing }),
-      emptyState("calendar", "Nenhum treino registrado", "Os treinos encerrados aparecem aqui."),
+      emptyState("calendar", "Nenhum treino registrado", "Treinos encerrados e cardio aparecem aqui."),
     ]);
   }
 
-  const groups = db.groupByMonth(sessions);
+  const groups = db.groupByMonth(items);
   return E("section", { class: "screen" }, [
     navBar("Histórico", { trailing }),
     E("div", { class: "scroll" }, groups.map((g) =>
       E("div", { class: "month-group" }, [
         E("div", { class: "section-header" }, g.title),
-        E("div", { class: "card list" }, g.sessions.map((s) => {
-          const row = E("button", { class: "row tappable", onclick: () => push({ name: "sessionDetail", sessionId: s.id }) }, [
-            E("div", { class: "row-main" }, [
-              E("div", { class: "row-title with-dot" }, [typeDot(s.typeRaw), s.typeRaw]),
-              E("div", { class: "row-sub" }, [
-                chip(`${s.exercises.length} exercícios`),
-                chip(fmt.weight(db.sessionVolume(s))),
-                db.sessionDuration(s) != null ? chip(fmt.duration(db.sessionDuration(s))) : null,
-              ]),
-            ]),
-            E("span", { class: "row-date muted sm" }, fmt.shortDate(s.date)),
-            E("span", { class: "chevron", html: ICONS.back }),
-          ]);
-          attachLongPress(row, () => confirmDelete("Apagar treino?", () => { db.deleteSession(s.id); render(); }));
-          return row;
-        })),
+        E("div", { class: "card list" }, g.sessions.map((item) =>
+          item.kind === "cardio" ? cardioRow(item.entry) : sessionRow(item.session))),
       ])
     )),
   ]);
@@ -1057,6 +1185,8 @@ function screenFor(s) {
   if (s.name === "setInput") return setInputScreen(s.exerciseId);
   if (s.name === "sessionDetail") return sessionDetailScreen(s.sessionId);
   if (s.name === "profile") return profileScreen();
+  if (s.name === "cardioLog") return cardioLogScreen();
+  if (s.name === "cardioDetail") return cardioDetailScreen(s.cardioId);
   return E("div");
 }
 

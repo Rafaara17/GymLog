@@ -8,6 +8,7 @@
 
 import { epley, mifflinStJeor, isoString, startOfDay, startOfWeek, monthKey, monthYear } from "./format.js";
 import { TACO } from "./data/taco.js";
+import { CARDIO_ACTIVITIES } from "./data/mets.js";
 
 const STORAGE_KEY = "gymlog.db.v1";
 
@@ -496,6 +497,51 @@ export function dailyBalance(dayMs) {
     remaining: allowance == null ? null : allowance - macros.kcal,
     logged: macros.entryCount > 0,
   };
+}
+
+// ── Cardio ────────────────────────────────────────────────────────────────
+// kcal, MET e peso usados ficam gravados na entrada (mudar o perfil depois
+// não reescreve o histórico).
+
+export function logCardio({ activityId, intensity, durationMin, distanceKm = null, date = Date.now() }) {
+  const activity = CARDIO_ACTIVITIES.find((a) => a.id === activityId) || CARDIO_ACTIVITIES[CARDIO_ACTIVITIES.length - 1];
+  const met = activity.mets[intensity] || activity.mets.moderado;
+  const weightKgUsed = (db.profile && db.profile.weightKg) || 70;
+  const entry = {
+    id: uid(), date,
+    activityId: activity.id, activity: activity.name,
+    intensity, durationMin,
+    distanceKm: distanceKm || null,
+    met, weightKgUsed,
+    kcal: Math.round((met * 3.5 * weightKgUsed) / 200 * durationMin),
+  };
+  db.cardio.push(entry);
+  save();
+  return entry;
+}
+
+export function deleteCardio(id) {
+  db.cardio = db.cardio.filter((c) => c.id !== id);
+  save();
+}
+
+export function cardioById(id) {
+  return db.cardio.find((c) => c.id === id) || null;
+}
+
+export function cardioForDay(dayMs) {
+  return db.cardio
+    .filter((c) => startOfDay(c.date) === dayMs)
+    .sort((a, b) => a.date - b.date);
+}
+
+// Treinos encerrados + cardio, mesclados por data (desc), para o Histórico.
+export function historyItems() {
+  const items = [
+    ...endedSessions().map((session) => ({ kind: "workout", date: session.date, session })),
+    ...db.cardio.map((entry) => ({ kind: "cardio", date: entry.date, entry })),
+  ];
+  return items.sort((a, b) => b.date - a.date);
 }
 
 // ── Histórico (agrupamento por mês) ───────────────────────────────────────

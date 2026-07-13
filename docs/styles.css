@@ -260,6 +260,16 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 .create-food-form .create-cat-back { align-self: center; }
 .form-input.wide { width: 150px; }
 
+/* ── Cardio ── */
+.btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--fill); color: var(--accent); border: none; border-radius: 12px; font-size: 17px; font-weight: 600; padding: 14px 18px; width: 100%; max-width: 380px; }
+.btn-secondary:active { background: var(--accent-soft); }
+.activity-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 16px; }
+.activity-chip { background: var(--bg-elevated); border: none; color: var(--text); border-radius: 10px; padding: 12px 6px; font-size: 14px; font-weight: 500; }
+.activity-chip.active { background: var(--accent); color: #fff; font-weight: 600; }
+.activity-chip:active { filter: brightness(0.95); }
+.cardio-dur { display: flex; justify-content: center; padding: 4px 16px; }
+.cardio-save { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 22px 16px calc(24px + env(safe-area-inset-bottom)); }
+
 /* ── Perfil / formulários ── */
 .form-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; min-height: 44px; }
 .card.list > .form-row + .form-row { border-top: 0.5px solid var(--separator); }

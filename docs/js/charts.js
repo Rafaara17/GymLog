@@ -6,9 +6,11 @@
 
 import { dayMonth } from "./format.js";
 
-// Cores por tipo de treino (System Colors do iOS).
+// Cores por tipo de treino (System Colors do iOS) + cardio (rosa Fitness).
+export const CARDIO_COLOR = "#FF375F";
 export const TYPE_COLORS = {
   Push: "#0A84FF", Pull: "#30D158", Upper: "#FF9F0A", Lower: "#BF5AF2",
+  Cardio: CARDIO_COLOR,
 };
 
 const W = 360, H = 240;

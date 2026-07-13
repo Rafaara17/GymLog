@@ -6,7 +6,7 @@ const CACHE = "gymlog-v4";
 const ASSETS = [
   "./", "index.html", "styles.css", "manifest.webmanifest",
   "js/app.js", "js/store.js", "js/format.js", "js/charts.js",
-  "js/data/taco.js",
+  "js/data/taco.js", "js/data/mets.js",
   "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-32.png",
 ];
 

@@ -934,11 +934,18 @@ function profileScreen() {
   function refreshResults() {
     const prof = db.profile();
     const b = db.bmr(prof), t = db.tdee(prof), target = db.dailyTarget(prof);
+    const cardioToday = db.dailyCardioKcal(fmt.startOfDay(Date.now()));
+    const counts = !!(prof && prof.countCardioInBalance);
+    const todayTarget = target == null ? null : target + (counts ? cardioToday : 0);
     resultsCard.innerHTML = "";
     resultsCard.append(
-      metricRow("TMB (basal)", b != null ? fmt.kcal(b) : "—"),
+      metricRow("TMB (em repouso)", b != null ? fmt.kcal(b) : "—"),
       metricRow("Gasto diário (TDEE)", t != null ? fmt.kcal(t) : "—"),
-      metricRow("Meta diária", target != null ? fmt.kcal(target) : "—"),
+      metricRow("Meta base", target != null ? fmt.kcal(target) : "—"),
+      metricRow("Cardio de hoje", cardioToday > 0 ? `+${fmt.kcal(cardioToday)}` : "nenhum registro"),
+      metricRow("Meta de hoje", todayTarget != null
+        ? fmt.kcal(todayTarget) + (counts && cardioToday > 0 ? " (base + cardio)" : "")
+        : "—"),
     );
   }
 
@@ -979,10 +986,14 @@ function profileScreen() {
 
   const manualInput = numInput(p.manualTargetKcal, "2000", (v) => set({ manualTargetKcal: v }));
 
-  const cardioToggle = E("button", {
-    class: "switch" + (p.countCardioInBalance ? " on" : ""),
+  // A linha inteira alterna o switch (alvo de toque generoso); o switch é só indicador.
+  const cardioToggleRow = E("button", {
+    class: "form-row row tappable",
     onclick: () => setAndRender({ countCardioInBalance: !p.countCardioInBalance }),
-  }, [E("span", { class: "knob" })]);
+  }, [
+    E("span", { class: "form-label" }, "Somar cardio à meta do dia"),
+    E("span", { class: "switch" + (p.countCardioInBalance ? " on" : "") }, [E("span", { class: "knob" })]),
+  ]);
 
   refreshResults();
 
@@ -1006,15 +1017,13 @@ function profileScreen() {
       p.targetMode === "manual"
         ? E("div", { class: "card list" }, [formRow("Meta diária (kcal)", manualInput)])
         : null,
-      E("div", { class: "card list", style: "margin-top: 10px" }, [
-        formRow("Somar cardio à meta do dia", cardioToggle),
-      ]),
-      p.countCardioInBalance
-        ? E("p", { class: "hint" }, "Com o cardio somando à meta, prefira um nível de atividade Sedentário ou Leve para não contar o exercício duas vezes.")
-        : null,
+      E("div", { class: "card list", style: "margin-top: 10px" }, [cardioToggleRow]),
+      E("p", { class: "hint" }, p.countCardioInBalance
+        ? "Cada cardio registrado soma na meta do dia em que foi feito (veja “Meta de hoje” abaixo). Prefira um nível de atividade Sedentário ou Leve para não contar o exercício duas vezes."
+        : "Desligado: o cardio aparece apenas como informação e a meta do dia fica fixa."),
       E("div", { class: "section-header" }, "Resultado"),
       resultsCard,
-      E("p", { class: "hint" }, "TMB pela fórmula de Mifflin-St Jeor. As alterações são salvas automaticamente."),
+      E("p", { class: "hint" }, "Gasto diário (TDEE) = TMB × nível de atividade. Meta base = TDEE ajustado ao objetivo (ou meta manual). As alterações são salvas automaticamente."),
     ]),
   ]);
 }

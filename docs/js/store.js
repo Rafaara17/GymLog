@@ -7,6 +7,7 @@
 //
 
 import { epley, mifflinStJeor, isoString, startOfDay, startOfWeek, monthKey, monthYear } from "./format.js";
+import { TACO } from "./data/taco.js";
 
 const STORAGE_KEY = "gymlog.db.v1";
 
@@ -284,6 +285,129 @@ export function dailyTarget(p = db.profile) {
   if (total == null) return null;
   const goal = GOALS.find(([id]) => id === p.goal);
   return Math.round((total + (goal ? goal[2] : 0)) / 10) * 10;
+}
+
+// ── Alimentos (TACO + personalizados) ─────────────────────────────────────
+// Um "food ref" é a forma comum de alimento usada pela busca e pelo registro:
+// { source: "taco"|"custom", refId, name, category, per100, unitName, unitGrams }.
+
+// Remove acentos e baixa a caixa para busca tolerante.
+function normalize(s) {
+  return s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+}
+
+// Nomes do TACO normalizados uma única vez (busca a cada tecla).
+let tacoNames = null;
+function tacoNormalized() {
+  if (!tacoNames) tacoNames = TACO.map((r) => normalize(r[0]));
+  return tacoNames;
+}
+
+export function tacoFood(index) {
+  const row = TACO[index];
+  if (!row) return null;
+  return {
+    source: "taco", refId: index, name: row[0], category: row[1],
+    per100: { kcal: row[2], protein: row[3], carbs: row[4], fat: row[5] },
+    unitName: null, unitGrams: null,
+  };
+}
+
+function customFoodRef(f) {
+  return {
+    source: "custom", refId: f.id, name: f.name, category: "Meus alimentos",
+    per100: f.per100, unitName: f.unitName || null, unitGrams: f.unitGrams || null,
+  };
+}
+
+export function createFood({ name, per100, unitName = null, unitGrams = null }) {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const clean = (v) => Math.max(0, Math.round((parseFloat(v) || 0) * 10) / 10);
+  const food = {
+    id: uid(), name: trimmed,
+    per100: { kcal: clean(per100.kcal), protein: clean(per100.protein), carbs: clean(per100.carbs), fat: clean(per100.fat) },
+    unitName: unitName ? String(unitName).trim() || null : null,
+    unitGrams: unitGrams ? Math.max(0, parseFloat(unitGrams) || 0) || null : null,
+    createdAt: Date.now(),
+  };
+  db.foods.push(food);
+  save();
+  return food;
+}
+
+export function deleteFood(id) {
+  db.foods = db.foods.filter((f) => f.id !== id);
+  save();
+}
+
+export function customFoods() {
+  return [...db.foods].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+}
+
+export function foodById(id) {
+  return db.foods.find((f) => f.id === id) || null;
+}
+
+// Resolve um {source, refId} para a definição atual do alimento (ou null).
+export function resolveFoodRef(ref) {
+  if (!ref) return null;
+  if (ref.source === "taco") return tacoFood(ref.refId);
+  if (ref.source === "custom") {
+    const f = foodById(ref.refId);
+    return f ? customFoodRef(f) : null;
+  }
+  return null;
+}
+
+// Alimentos usados recentemente, por frequência + recência (para busca vazia).
+export function recentFoods(limit = 8) {
+  const byKey = new Map();
+  for (const m of db.meals) {
+    const key = `${m.foodRef.source}|${m.foodRef.refId}`;
+    const cur = byKey.get(key) || { count: 0, lastUsed: 0, ref: m.foodRef };
+    cur.count += 1;
+    cur.lastUsed = Math.max(cur.lastUsed, m.date);
+    byKey.set(key, cur);
+  }
+  return [...byKey.values()]
+    .sort((a, b) => (b.count - a.count) || (b.lastUsed - a.lastUsed))
+    .map((x) => resolveFoodRef(x.ref))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+// Busca mesclada sem acentos: recentes → personalizados → TACO.
+export function searchFoods(query, limit = 60) {
+  const q = normalize(query.trim());
+  if (!q) return [];
+  const seen = new Set();
+  const results = [];
+  const push = (ref) => {
+    if (!ref) return;
+    const key = `${ref.source}|${ref.refId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push(ref);
+  };
+  for (const ref of recentFoods(12)) {
+    if (normalize(ref.name).includes(q)) push(ref);
+  }
+  for (const f of customFoods()) {
+    if (normalize(f.name).includes(q)) push(customFoodRef(f));
+  }
+  // No TACO, quem começa pelo termo vem antes de quem só o contém.
+  const names = tacoNormalized();
+  const starts = [], contains = [];
+  for (let i = 0; i < names.length; i++) {
+    if (names[i].startsWith(q)) starts.push(i);
+    else if (names[i].includes(q)) contains.push(i);
+  }
+  for (const i of starts.concat(contains)) {
+    if (results.length >= limit) break;
+    push(tacoFood(i));
+  }
+  return results.slice(0, limit);
 }
 
 // ── Histórico (agrupamento por mês) ───────────────────────────────────────
